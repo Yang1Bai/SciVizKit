@@ -144,6 +144,111 @@ def pairplot(df: pd.DataFrame, cols: list):
         return None, None, f"# Error: {e}"
 
 
+# ── Contour 2D ────────────────────────────────────────────────────────
+
+def contour_2d(df: pd.DataFrame, x_col: str, y_col: str):
+    """2D KDE contour / density contour plot"""
+    try:
+        clean = df[[x_col, y_col]].dropna()
+
+        fig_s, ax = plt.subplots(figsize=(8, 6))
+        sns.kdeplot(data=clean, x=x_col, y=y_col, fill=True, cmap="Blues",
+                    levels=15, ax=ax)
+        ax.scatter(clean[x_col], clean[y_col], s=5, alpha=0.2, color="navy")
+        ax.set_title(f"2D Density Contour: {x_col} vs {y_col}")
+        fig_s.tight_layout()
+
+        fig_p = go.Figure(go.Histogram2dContour(
+            x=clean[x_col], y=clean[y_col],
+            colorscale="Blues",
+        ))
+        fig_p.add_trace(go.Scatter(
+            x=clean[x_col], y=clean[y_col],
+            mode="markers",
+            marker=dict(color="navy", size=3, opacity=0.2),
+            showlegend=False,
+        ))
+        fig_p.update_layout(title=f"2D Density Contour: {x_col} vs {y_col}")
+
+        code = f"""# 2D Density Contour Plot
+import seaborn as sns
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.kdeplot(data=df, x='{x_col}', y='{y_col}', fill=True, cmap='Blues', levels=15, ax=ax)
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Connected Scatter ───────────────────────────────────────────────────
+
+def connected_scatter(df: pd.DataFrame, x_col: str, y_col: str, time_col: str):
+    """Connected scatter plot showing trajectory over time"""
+    try:
+        clean = df[[x_col, y_col, time_col]].dropna().sort_values(time_col)
+
+        fig_s, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(clean[x_col], clean[y_col], "-", lw=1.5,
+                color="lightsteelblue", alpha=0.6, zorder=1)
+        sc = ax.scatter(clean[x_col], clean[y_col],
+                        c=np.arange(len(clean)), cmap="viridis", s=40, zorder=5)
+        plt.colorbar(sc, ax=ax, label=time_col)
+        ax.set_xlabel(x_col)
+        ax.set_ylabel(y_col)
+        ax.set_title(f"Connected Scatter: {x_col} vs {y_col} (over {time_col})")
+        fig_s.tight_layout()
+
+        fig_p = px.line(clean, x=x_col, y=y_col,
+                        hover_data={time_col: True},
+                        markers=True,
+                        title=f"Connected Scatter: trajectory over {time_col}")
+        fig_p.update_traces(marker=dict(size=8))
+
+        code = f"""# Connected Scatter Plot
+import plotly.express as px
+df_sorted = df.sort_values('{time_col}')
+fig = px.line(df_sorted, x='{x_col}', y='{y_col}', markers=True,
+              title='Connected Scatter')
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Marginal Scatter ──────────────────────────────────────────────────
+
+def marginal_scatter(df: pd.DataFrame, x_col: str, y_col: str, color_col: str = None):
+    """Scatter with KDE marginal distributions on axes"""
+    try:
+        clean = df[[x_col, y_col] +
+                   ([color_col] if color_col and color_col in df.columns else [])].dropna()
+
+        hue = color_col if (color_col and color_col in df.columns) else None
+        g = sns.JointGrid(data=clean, x=x_col, y=y_col)
+        g.plot_joint(sns.scatterplot, hue=clean[hue] if hue else None, alpha=0.5, s=20)
+        g.plot_marginals(sns.kdeplot, fill=True, alpha=0.4)
+        g.figure.suptitle(f"Marginal Scatter: {x_col} vs {y_col}", y=1.01)
+        fig_s = g.figure
+
+        color_arg = color_col if hue else None
+        fig_p = px.scatter(clean, x=x_col, y=y_col, color=color_arg,
+                           marginal_x="violin", marginal_y="violin",
+                           title=f"Marginal Scatter: {x_col} vs {y_col}")
+
+        code = f"""# Marginal Scatter Plot
+import seaborn as sns
+g = sns.JointGrid(data=df, x='{x_col}', y='{y_col}')
+g.plot_joint(sns.scatterplot, alpha=0.5)
+g.plot_marginals(sns.kdeplot, fill=True)
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
 # ── Parallel Coordinates ──────────────────────────────────────────────
 
 def parallel_coords(df: pd.DataFrame, cols: list, color_col: str = None):

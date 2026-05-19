@@ -117,3 +117,170 @@ def dendrogram_plot(df: pd.DataFrame, cols: list):
         return fig_s, None, code
     except Exception as e:
         return None, None, f"# Error: {e}"
+
+
+# ── Chord Diagram ─────────────────────────────────────────────────────
+
+def chord_diagram(df: pd.DataFrame, source_col: str, target_col: str, value_col: str):
+    """Chord diagram using plotly Sankey as chord-like layout"""
+    try:
+        all_nodes = list(pd.concat([df[source_col], df[target_col]]).astype(str).unique())
+        n_nodes = len(all_nodes)
+        node_idx = {nd: i for i, nd in enumerate(all_nodes)}
+
+        # Build adjacency matrix
+        matrix = np.zeros((n_nodes, n_nodes))
+        for _, row in df.iterrows():
+            s = node_idx[str(row[source_col])]
+            t = node_idx[str(row[target_col])]
+            matrix[s][t] += float(row[value_col])
+
+        # Plotly Sankey
+        fig_p = go.Figure(go.Sankey(
+            node=dict(label=all_nodes, pad=15, thickness=20),
+            link=dict(
+                source=[node_idx[str(s)] for s in df[source_col]],
+                target=[node_idx[str(t)] for t in df[target_col]],
+                value=df[value_col].tolist(),
+            )
+        ))
+        fig_p.update_layout(title="Chord Diagram")
+
+        # Static: nodes on a circle with chord lines
+        fig_s, ax = plt.subplots(figsize=(9, 9))
+        angles = np.linspace(0, 2 * np.pi, n_nodes, endpoint=False)
+        colors = plt.cm.tab20.colors
+        import matplotlib.patches as mpatches
+
+        for i, (nd, ang) in enumerate(zip(all_nodes, angles)):
+            xi, yi = np.cos(ang), np.sin(ang)
+            ax.plot(xi * 1.05, yi * 1.05, "o",
+                    color=colors[i % len(colors)], markersize=12)
+            ax.text(xi * 1.18, yi * 1.18, str(nd)[:10],
+                    ha="center", va="center", fontsize=7)
+
+        max_val = matrix.max() + 1e-9
+        for i in range(n_nodes):
+            for j in range(i + 1, n_nodes):
+                if matrix[i][j] + matrix[j][i] > 0:
+                    xi, yi = np.cos(angles[i]), np.sin(angles[i])
+                    xj, yj = np.cos(angles[j]), np.sin(angles[j])
+                    lw = (matrix[i][j] + matrix[j][i]) / max_val * 4
+                    ax.plot([xi, xj], [yi, yj],
+                            color=colors[i % len(colors)],
+                            alpha=0.4, lw=max(0.5, lw))
+
+        circle = plt.Circle((0, 0), 1, fill=False, edgecolor="gray", lw=0.5)
+        ax.add_patch(circle)
+        ax.set_xlim(-1.4, 1.4)
+        ax.set_ylim(-1.4, 1.4)
+        ax.set_aspect("equal")
+        ax.axis("off")
+        ax.set_title("Chord Diagram")
+        fig_s.tight_layout()
+
+        code = """# Chord Diagram
+import plotly.graph_objects as go
+fig = go.Figure(go.Sankey(
+    node=dict(label=nodes),
+    link=dict(source=sources, target=targets, value=values)
+))
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Arc Diagram ───────────────────────────────────────────────────────
+
+def arc_diagram(df: pd.DataFrame, source_col: str, target_col: str,
+                value_col: str = None):
+    """Arc diagram — nodes on a line, arcs above"""
+    try:
+        import matplotlib.patches as mpatches
+        all_nodes = list(pd.concat([df[source_col], df[target_col]]).astype(str).unique())
+        node_idx = {nd: i for i, nd in enumerate(all_nodes)}
+        n_nodes = len(all_nodes)
+        colors = plt.cm.tab10.colors
+
+        fig_s, ax = plt.subplots(figsize=(max(10, n_nodes * 0.8), 6))
+        for i, nd in enumerate(all_nodes):
+            ax.plot(i, 0, "o", color="steelblue", markersize=12, zorder=5)
+            ax.text(i, -0.15, str(nd)[:10], ha="center", va="top", fontsize=8)
+
+        max_val = df[value_col].max() if (value_col and value_col in df.columns) else 1
+        for _, row in df.iterrows():
+            s = node_idx[str(row[source_col])]
+            t = node_idx[str(row[target_col])]
+            if s == t:
+                continue
+            lw = 1.5
+            if value_col and value_col in df.columns:
+                lw = min(float(row[value_col]) / (max_val + 1e-9) * 5, 5)
+            arc = mpatches.Arc(((s + t) / 2, 0), abs(t - s), abs(t - s),
+                               angle=0, theta1=0, theta2=180,
+                               color=colors[s % len(colors)], lw=lw, alpha=0.7)
+            ax.add_patch(arc)
+
+        ax.set_xlim(-0.5, n_nodes - 0.5)
+        ax.set_ylim(-0.3, max(1.5, n_nodes / 2))
+        ax.axis("off")
+        ax.set_title("Arc Diagram")
+        fig_s.tight_layout()
+
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Scatter(
+            x=list(range(n_nodes)),
+            y=[0] * n_nodes,
+            mode="markers+text",
+            text=all_nodes,
+            textposition="bottom center",
+            marker=dict(size=15, color="steelblue"),
+        ))
+        fig_p.update_layout(title="Arc Diagram",
+                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+
+        code = """# Arc Diagram
+import matplotlib.patches as mpatches
+fig, ax = plt.subplots(figsize=(12, 6))
+for s, t in zip(sources, targets):
+    arc = mpatches.Arc(((s+t)/2, 0), abs(t-s), abs(t-s),
+                       theta1=0, theta2=180, color='steelblue', alpha=0.7)
+    ax.add_patch(arc)
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Alluvial Diagram ──────────────────────────────────────────────────
+
+def alluvial_diagram(df: pd.DataFrame, stage_cols: list, value_col: str = None):
+    """Alluvial/parallel sets diagram using plotly"""
+    try:
+        valid_cols = [c for c in stage_cols if c in df.columns]
+        if len(valid_cols) < 2:
+            return None, None, "# Need at least 2 valid stage columns"
+
+        plot_df = df[valid_cols].astype(str).copy()
+        dimensions = [dict(values=plot_df[c], label=c) for c in valid_cols]
+
+        fig_p = go.Figure(go.Parcats(
+            dimensions=dimensions,
+            bundlecolors=True,
+        ))
+        fig_p.update_layout(title="Alluvial Diagram")
+
+        fig_s = None  # Best shown interactively
+
+        code = f"""# Alluvial Diagram
+import plotly.graph_objects as go
+dimensions = [dict(values=df[c].astype(str), label=c) for c in {valid_cols}]
+fig = go.Figure(go.Parcats(dimensions=dimensions))
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"

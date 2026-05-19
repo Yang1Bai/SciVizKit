@@ -319,3 +319,493 @@ def kaplan_meier_plot(df: pd.DataFrame, duration_col: str, event_col: str,
         return fig_s, fig_p, code
     except Exception as e:
         return None, None, f"# Error: {e}"
+
+
+# ── UMAP Plot ─────────────────────────────────────────────────────────
+
+def umap_plot(df: pd.DataFrame, feature_cols: list, color_col: str = None):
+    """UMAP dimensionality reduction plot"""
+    try:
+        try:
+            import umap
+            HAS_UMAP = True
+        except ImportError:
+            HAS_UMAP = False
+
+        num_df = df[feature_cols].select_dtypes("number").dropna()
+        if num_df.shape[0] < 10 or num_df.shape[1] < 2:
+            return None, None, "# Need at least 10 rows and 2 numeric feature columns"
+
+        X = StandardScaler().fit_transform(num_df.fillna(0))
+
+        if HAS_UMAP:
+            reducer = umap.UMAP(n_components=2, random_state=42)
+            embedding = reducer.fit_transform(X)
+            x_label, y_label = "UMAP-1", "UMAP-2"
+        else:
+            # Fallback to PCA if umap not available
+            pca = PCA(n_components=2)
+            embedding = pca.fit_transform(X)
+            ev = pca.explained_variance_ratio_
+            x_label = f"PC1 ({ev[0]*100:.1f}%)"
+            y_label = f"PC2 ({ev[1]*100:.1f}%)"
+
+        emb_df = pd.DataFrame(embedding, columns=[x_label, y_label], index=num_df.index)
+        color_vals = None
+        if color_col and color_col in df.columns:
+            emb_df["group"] = df.loc[num_df.index, color_col].values
+            color_vals = "group"
+
+        fig_s, ax = plt.subplots(figsize=(8, 6))
+        if color_vals:
+            groups = emb_df["group"].unique()
+            colors = plt.cm.tab20.colors
+            for i, g in enumerate(groups):
+                sub = emb_df[emb_df["group"] == g]
+                ax.scatter(sub[x_label], sub[y_label], alpha=0.7,
+                           label=str(g), s=30, color=colors[i % len(colors)])
+            ax.legend(fontsize=7)
+        else:
+            ax.scatter(emb_df[x_label], emb_df[y_label], alpha=0.7,
+                       color="steelblue", s=30)
+        ax.set_xlabel(x_label)
+        ax.set_ylabel(y_label)
+        ax.set_title("UMAP" if HAS_UMAP else "PCA (UMAP fallback)")
+        fig_s.tight_layout()
+
+        fig_p = px.scatter(emb_df, x=x_label, y=y_label, color=color_vals,
+                           title="UMAP" if HAS_UMAP else "PCA (UMAP fallback)")
+        code = f"""# UMAP Plot
+import umap
+from sklearn.preprocessing import StandardScaler
+X = StandardScaler().fit_transform(df[{feature_cols}].fillna(0))
+reducer = umap.UMAP(n_components=2, random_state=42)
+embedding = reducer.fit_transform(X)
+import plotly.express as px
+fig = px.scatter(x=embedding[:, 0], y=embedding[:, 1])
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── t-SNE Plot ────────────────────────────────────────────────────────
+
+def tsne_plot(df: pd.DataFrame, feature_cols: list, color_col: str = None):
+    """t-SNE plot using sklearn"""
+    try:
+        from sklearn.manifold import TSNE
+
+        num_df = df[feature_cols].select_dtypes("number").dropna()
+        if num_df.shape[0] < 10 or num_df.shape[1] < 2:
+            return None, None, "# Need at least 10 rows and 2 numeric feature columns"
+
+        sample = num_df.sample(min(1000, len(num_df)), random_state=42)
+        X = StandardScaler().fit_transform(sample.fillna(0))
+        perplexity = min(30, len(sample) - 1)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity)
+        embedding = tsne.fit_transform(X)
+
+        emb_df = pd.DataFrame(embedding, columns=["tSNE-1", "tSNE-2"], index=sample.index)
+        color_vals = None
+        if color_col and color_col in df.columns:
+            emb_df["group"] = df.loc[sample.index, color_col].values
+            color_vals = "group"
+
+        fig_s, ax = plt.subplots(figsize=(8, 6))
+        if color_vals:
+            groups = emb_df["group"].unique()
+            colors = plt.cm.tab20.colors
+            for i, g in enumerate(groups):
+                sub = emb_df[emb_df["group"] == g]
+                ax.scatter(sub["tSNE-1"], sub["tSNE-2"], alpha=0.7,
+                           label=str(g), s=30, color=colors[i % len(colors)])
+            ax.legend(fontsize=7)
+        else:
+            ax.scatter(emb_df["tSNE-1"], emb_df["tSNE-2"], alpha=0.7,
+                       color="steelblue", s=30)
+        ax.set_xlabel("tSNE-1")
+        ax.set_ylabel("tSNE-2")
+        ax.set_title("t-SNE Plot")
+        fig_s.tight_layout()
+
+        fig_p = px.scatter(emb_df, x="tSNE-1", y="tSNE-2", color=color_vals,
+                           title="t-SNE Plot")
+        code = f"""# t-SNE Plot
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+X = StandardScaler().fit_transform(df[{feature_cols}].fillna(0))
+tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+embedding = tsne.fit_transform(X)
+import plotly.express as px
+fig = px.scatter(x=embedding[:, 0], y=embedding[:, 1])
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Manhattan Plot ────────────────────────────────────────────────────
+
+def manhattan_plot(df: pd.DataFrame, chr_col: str, pos_col: str, pval_col: str):
+    """Manhattan plot for GWAS data"""
+    try:
+        df2 = df[[chr_col, pos_col, pval_col]].dropna().copy()
+        df2["neg_log10p"] = -np.log10(df2[pval_col].clip(lower=1e-300))
+        df2 = df2.sort_values([chr_col, pos_col])
+
+        # Assign cumulative x position
+        chrs = df2[chr_col].astype(str).unique()
+        colors = ["#4575b4", "#d73027"] * (len(chrs) // 2 + 1)
+        chr_colors = {c: colors[i % len(colors)] for i, c in enumerate(chrs)}
+
+        x_pos = []
+        x_offset = 0
+        chr_midpoints = {}
+        for c in chrs:
+            sub = df2[df2[chr_col].astype(str) == c]
+            positions = sub[pos_col].values
+            x_pos.extend(positions - positions.min() + x_offset)
+            chr_midpoints[c] = x_offset + (positions.max() - positions.min()) / 2
+            x_offset += (positions.max() - positions.min()) + 1e6
+
+        df2["x_pos"] = x_pos
+        df2["color"] = df2[chr_col].astype(str).map(chr_colors)
+
+        fig_s, ax = plt.subplots(figsize=(14, 5))
+        for c in chrs:
+            sub = df2[df2[chr_col].astype(str) == c]
+            ax.scatter(sub["x_pos"], sub["neg_log10p"],
+                       c=chr_colors[c], s=5, alpha=0.7)
+
+        # Significance threshold
+        sig_thresh = -np.log10(5e-8)
+        ax.axhline(sig_thresh, color="red", linestyle="--", lw=1,
+                   label="p=5×10⁻⁸")
+        ax.set_xticks([chr_midpoints[c] for c in chrs])
+        ax.set_xticklabels([str(c) for c in chrs], fontsize=7, rotation=45)
+        ax.set_ylabel("-log₁₀(p-value)")
+        ax.set_xlabel("Chromosome")
+        ax.set_title("Manhattan Plot")
+        ax.legend()
+        fig_s.tight_layout()
+
+        fig_p = px.scatter(df2, x="x_pos", y="neg_log10p", color=chr_col,
+                           title="Manhattan Plot",
+                           labels={"neg_log10p": "-log₁₀(p-value)", "x_pos": "Position"})
+        fig_p.add_hline(y=sig_thresh, line_dash="dash", line_color="red",
+                        annotation_text="p=5×10⁻⁸")
+
+        code = f"""# Manhattan Plot
+df['-log10p'] = -np.log10(df['{pval_col}'])
+# Sort by chromosome and position
+fig, ax = plt.subplots(figsize=(14, 5))
+# Plot each chromosome with alternating colors
+ax.axhline(-np.log10(5e-8), color='red', linestyle='--')
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Forest Plot ───────────────────────────────────────────────────────
+
+def forest_plot(df: pd.DataFrame, study_col: str, effect_col: str,
+                ci_low_col: str, ci_high_col: str):
+    """Forest plot for meta-analysis"""
+    try:
+        sample = df[[study_col, effect_col, ci_low_col, ci_high_col]].dropna().head(20)
+        y_pos = np.arange(len(sample))
+
+        fig_s, ax = plt.subplots(figsize=(10, max(5, len(sample) * 0.6)))
+        for i, (_, row) in enumerate(sample.iterrows()):
+            ax.plot([row[ci_low_col], row[ci_high_col]], [i, i],
+                    color="steelblue", lw=2, solid_capstyle="round")
+            ax.plot(row[effect_col], i, "s", color="steelblue",
+                    markersize=8, zorder=5)
+
+        ax.axvline(0, color="black", lw=0.8, linestyle="--")
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(sample[study_col].astype(str), fontsize=9)
+        ax.set_xlabel("Effect Size")
+        ax.set_title("Forest Plot")
+        ax.grid(axis="x", alpha=0.3)
+        fig_s.tight_layout()
+
+        # Overall estimate
+        pooled = sample[effect_col].mean()
+        ci_l = sample[ci_low_col].mean()
+        ci_h = sample[ci_high_col].mean()
+
+        fig_p = go.Figure()
+        for _, row in sample.iterrows():
+            fig_p.add_trace(go.Scatter(
+                x=[row[ci_low_col], row[effect_col], row[ci_high_col]],
+                y=[str(row[study_col])] * 3,
+                mode="lines+markers",
+                marker=dict(size=[4, 10, 4], color="steelblue"),
+                showlegend=False,
+            ))
+        fig_p.add_vline(x=0, line_dash="dash", line_color="black")
+        fig_p.update_layout(title="Forest Plot", xaxis_title="Effect Size")
+
+        code = f"""# Forest Plot
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(10, len(df) * 0.6))
+for i, (_, row) in enumerate(df.iterrows()):
+    ax.plot([row['{ci_low_col}'], row['{ci_high_col}']], [i, i], color='steelblue', lw=2)
+    ax.plot(row['{effect_col}'], i, 's', color='steelblue', markersize=8)
+ax.axvline(0, linestyle='--', color='black')
+ax.set_yticks(range(len(df)))
+ax.set_yticklabels(df['{study_col}'])
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Funnel Plot ───────────────────────────────────────────────────────
+
+def funnel_plot(df: pd.DataFrame, effect_col: str, se_col: str,
+                study_col: str = None):
+    """Funnel plot for publication bias detection"""
+    try:
+        clean = df[[effect_col, se_col] +
+                   ([study_col] if study_col and study_col in df.columns else [])].dropna()
+
+        pooled = clean[effect_col].mean()
+        precision = 1 / (clean[se_col] + 1e-9)
+
+        # Funnel lines
+        se_max = clean[se_col].max()
+        se_range = np.linspace(0, se_max * 1.1, 100)
+        upper = pooled + 1.96 * se_range
+        lower = pooled - 1.96 * se_range
+
+        fig_s, ax = plt.subplots(figsize=(8, 6))
+        ax.scatter(clean[effect_col], clean[se_col], color="steelblue",
+                   alpha=0.7, s=40)
+        ax.plot(upper, se_range, "r--", lw=1, label="95% CI")
+        ax.plot(lower, se_range, "r--", lw=1)
+        ax.axvline(pooled, color="gray", lw=1, linestyle="-")
+        ax.invert_yaxis()
+        ax.set_xlabel("Effect size")
+        ax.set_ylabel("Standard Error")
+        ax.set_title("Funnel Plot")
+        ax.legend()
+        fig_s.tight_layout()
+
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Scatter(
+            x=clean[effect_col], y=clean[se_col],
+            mode="markers",
+            marker=dict(color="steelblue", size=8),
+            text=clean[study_col].astype(str) if study_col and study_col in df.columns else None,
+            name="Studies",
+        ))
+        fig_p.add_trace(go.Scatter(x=upper, y=se_range, mode="lines",
+                                   line=dict(dash="dash", color="red"), name="95% CI"))
+        fig_p.add_trace(go.Scatter(x=lower, y=se_range, mode="lines",
+                                   line=dict(dash="dash", color="red"), showlegend=False))
+        fig_p.update_yaxes(autorange="reversed")
+        fig_p.update_layout(title="Funnel Plot",
+                            xaxis_title="Effect size",
+                            yaxis_title="Standard Error")
+
+        code = f"""# Funnel Plot
+fig, ax = plt.subplots(figsize=(8, 6))
+ax.scatter(df['{effect_col}'], df['{se_col}'], color='steelblue', alpha=0.7)
+pooled = df['{effect_col}'].mean()
+ax.axvline(pooled, color='gray', linestyle='-')
+ax.invert_yaxis()
+ax.set_xlabel('Effect size')
+ax.set_ylabel('Standard Error')
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Calibration Curve ─────────────────────────────────────────────────
+
+def calibration_curve(df: pd.DataFrame, y_true_col: str, y_prob_col: str):
+    """Calibration/reliability curve for classifiers"""
+    try:
+        from sklearn.calibration import calibration_curve as sk_cal_curve
+
+        clean = df[[y_true_col, y_prob_col]].dropna()
+        y_true = clean[y_true_col].values
+        y_prob = clean[y_prob_col].values
+
+        n_bins = min(10, len(clean) // 10)
+        if n_bins < 2:
+            n_bins = 2
+        fraction_pos, mean_predicted = sk_cal_curve(y_true, y_prob, n_bins=n_bins)
+
+        fig_s, ax = plt.subplots(figsize=(7, 7))
+        ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfect calibration")
+        ax.plot(mean_predicted, fraction_pos, "o-", color="steelblue",
+                lw=2, markersize=8, label="Model")
+        ax.set_xlabel("Mean predicted probability")
+        ax.set_ylabel("Fraction of positives")
+        ax.set_title("Calibration Curve")
+        ax.legend()
+        fig_s.tight_layout()
+
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines",
+                                   line=dict(dash="dash", color="black"),
+                                   name="Perfect"))
+        fig_p.add_trace(go.Scatter(x=mean_predicted, y=fraction_pos,
+                                   mode="lines+markers",
+                                   line=dict(color="steelblue"),
+                                   marker=dict(size=8), name="Model"))
+        fig_p.update_layout(title="Calibration Curve",
+                            xaxis_title="Mean predicted probability",
+                            yaxis_title="Fraction of positives")
+
+        code = f"""# Calibration Curve
+from sklearn.calibration import calibration_curve
+fraction_pos, mean_pred = calibration_curve(df['{y_true_col}'], df['{y_prob_col}'],
+                                            n_bins=10)
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(7, 7))
+ax.plot([0, 1], [0, 1], 'k--', label='Perfect')
+ax.plot(mean_pred, fraction_pos, 'o-', label='Model')
+ax.legend()
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Residual Plot ─────────────────────────────────────────────────────
+
+def residual_plot(df: pd.DataFrame, fitted_col: str, residual_col: str):
+    """Residual plot for regression diagnostics"""
+    try:
+        clean = df[[fitted_col, residual_col]].dropna()
+
+        fig_s, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Residuals vs Fitted
+        axes[0].scatter(clean[fitted_col], clean[residual_col],
+                        alpha=0.5, color="steelblue", s=20)
+        axes[0].axhline(0, color="red", linestyle="--", lw=1)
+        axes[0].set_xlabel(f"Fitted ({fitted_col})")
+        axes[0].set_ylabel(f"Residuals ({residual_col})")
+        axes[0].set_title("Residuals vs Fitted")
+
+        # Q-Q of residuals
+        from scipy import stats as scipy_stats
+        (osm, osr), (slope, intercept, r) = scipy_stats.probplot(
+            clean[residual_col], dist="norm")
+        axes[1].plot(osm, osr, "o", alpha=0.5, color="steelblue", ms=4)
+        axes[1].plot(osm, slope * np.array(osm) + intercept, "r-", lw=2)
+        axes[1].set_xlabel("Theoretical Quantiles")
+        axes[1].set_ylabel("Sample Quantiles")
+        axes[1].set_title("Q-Q Plot of Residuals")
+
+        fig_s.tight_layout()
+
+        fig_p = go.Figure()
+        fig_p.add_trace(go.Scatter(x=clean[fitted_col], y=clean[residual_col],
+                                   mode="markers",
+                                   marker=dict(color="steelblue", size=5, opacity=0.6),
+                                   name="Residuals"))
+        fig_p.add_hline(y=0, line_dash="dash", line_color="red")
+        fig_p.update_layout(title="Residual Plot",
+                            xaxis_title=f"Fitted ({fitted_col})",
+                            yaxis_title=f"Residuals ({residual_col})")
+
+        code = f"""# Residual Plot
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+axes[0].scatter(df['{fitted_col}'], df['{residual_col}'], alpha=0.5, color='steelblue')
+axes[0].axhline(0, color='red', linestyle='--')
+axes[0].set_xlabel('{fitted_col}')
+axes[0].set_ylabel('{residual_col}')
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── UpSet Plot ────────────────────────────────────────────────────────
+
+def upset_plot(df: pd.DataFrame, set_cols: list):
+    """UpSet plot as alternative to Venn for many sets (manual implementation)"""
+    try:
+        valid_cols = [c for c in set_cols if c in df.columns]
+        if len(valid_cols) < 2:
+            return None, None, "# Need at least 2 boolean/binary set columns"
+
+        # Binarize
+        bin_df = df[valid_cols].fillna(0).astype(bool)
+        n_sets = len(valid_cols)
+
+        # Generate all combinations
+        from itertools import combinations
+        combo_sizes = {}
+        # Single sets
+        for c in valid_cols:
+            mask = bin_df[c] & ~bin_df[[x for x in valid_cols if x != c]].any(axis=1)
+            combo_sizes[tuple([c])] = mask.sum()
+        # Intersections
+        for r in range(2, n_sets + 1):
+            for combo in combinations(valid_cols, r):
+                mask = bin_df[list(combo)].all(axis=1)
+                combo_sizes[tuple(sorted(combo))] = mask.sum()
+
+        # Sort by size
+        sorted_combos = sorted(combo_sizes.items(), key=lambda x: -x[1])[:15]
+        combo_names = ["+".join(c) if len(c) <= 2 else f"{len(c)}-way" for c, _ in sorted_combos]
+        combo_vals = [v for _, v in sorted_combos]
+
+        fig_s, axes = plt.subplots(2, 1, figsize=(12, 8),
+                                   gridspec_kw={"height_ratios": [2, 1]})
+
+        # Bar chart on top
+        axes[0].bar(range(len(combo_vals)), combo_vals, color="steelblue")
+        axes[0].set_xticks(range(len(combo_names)))
+        axes[0].set_xticklabels(combo_names, rotation=45, ha="right", fontsize=8)
+        axes[0].set_ylabel("Intersection size")
+        axes[0].set_title("UpSet Plot")
+
+        # Dot matrix on bottom
+        for i, (combo, _) in enumerate(sorted_combos):
+            for j, col in enumerate(valid_cols):
+                if col in combo:
+                    axes[1].plot(i, j, "o", color="steelblue", markersize=12)
+                else:
+                    axes[1].plot(i, j, "o", color="lightgray", markersize=12)
+
+        axes[1].set_yticks(range(n_sets))
+        axes[1].set_yticklabels(valid_cols, fontsize=8)
+        axes[1].set_xticks([])
+        axes[1].set_xlim(-0.5, len(sorted_combos) - 0.5)
+        fig_s.tight_layout()
+
+        # Plotly bar chart
+        fig_p = go.Figure(go.Bar(
+            x=combo_names, y=combo_vals, marker_color="steelblue"
+        ))
+        fig_p.update_layout(title="UpSet Plot — Intersection Sizes",
+                            xaxis_title="Intersection",
+                            yaxis_title="Count")
+
+        code = f"""# UpSet Plot
+# Shows intersections between binary/boolean set columns
+# Columns: {valid_cols}
+from itertools import combinations
+bin_df = df[{valid_cols}].astype(bool)
+# Compute intersection sizes for all combinations
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"

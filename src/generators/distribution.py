@@ -175,3 +175,184 @@ def beeswarm_plot(df: pd.DataFrame, x_col: str, y_col: str):
         return fig_s, fig_p, code
     except Exception as e:
         return None, None, f"# Error: {e}"
+
+
+# ── Ridgeline Plot ────────────────────────────────────────────────────
+
+def ridgeline_plot(df: pd.DataFrame, x_col: str, group_col: str):
+    """Joy/Ridgeline plot using matplotlib (manual KDE stacking)"""
+    try:
+        groups = df[group_col].dropna().unique()
+        n = len(groups)
+        if n > 15:
+            groups = groups[:15]
+            n = 15
+
+        fig_s, axes = plt.subplots(n, 1, figsize=(10, max(6, n * 1.2)),
+                                   sharex=True)
+        if n == 1:
+            axes = [axes]
+
+        colors = plt.cm.viridis(np.linspace(0.2, 0.85, n))
+        x_min = df[x_col].quantile(0.01)
+        x_max = df[x_col].quantile(0.99)
+        xs = np.linspace(x_min, x_max, 300)
+
+        for i, (grp, ax, color) in enumerate(zip(groups, axes, colors)):
+            sub = df[df[group_col] == grp][x_col].dropna()
+            if len(sub) < 5:
+                continue
+            kde = stats.gaussian_kde(sub)
+            ys = kde(xs)
+            ax.fill_between(xs, ys, alpha=0.7, color=color)
+            ax.plot(xs, ys, color=color, lw=1.5)
+            ax.set_ylabel(str(grp), rotation=0, ha="right", va="center", fontsize=8)
+            ax.set_yticks([])
+            ax.spines["left"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+
+        axes[-1].set_xlabel(x_col)
+        fig_s.suptitle(f"Ridgeline Plot of {x_col} by {group_col}", y=1.01)
+        fig_s.tight_layout()
+
+        # Plotly version using violin
+        fig_p = go.Figure()
+        for grp in groups:
+            sub = df[df[group_col] == grp][x_col].dropna()
+            fig_p.add_trace(go.Violin(x=sub, name=str(grp), orientation="h",
+                                      side="positive", width=2, points=False))
+        fig_p.update_layout(title=f"Ridgeline Plot of {x_col} by {group_col}",
+                            xaxis_title=x_col)
+
+        code = f"""# Ridgeline Plot
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+
+groups = df['{group_col}'].unique()
+n = len(groups)
+fig, axes = plt.subplots(n, 1, figsize=(10, n*1.2), sharex=True)
+xs = np.linspace(df['{x_col}'].min(), df['{x_col}'].max(), 300)
+for ax, grp in zip(axes, groups):
+    sub = df[df['{group_col}']==grp]['{x_col}'].dropna()
+    kde = stats.gaussian_kde(sub)
+    ax.fill_between(xs, kde(xs), alpha=0.7)
+    ax.set_ylabel(str(grp), rotation=0, ha='right')
+plt.tight_layout()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Marginal Plot ─────────────────────────────────────────────────────
+
+def marginal_plot(df: pd.DataFrame, x_col: str, y_col: str, color_col: str = None):
+    """Scatter plot with marginal histograms on top and right axes"""
+    try:
+        clean = df[[x_col, y_col] + ([color_col] if color_col and color_col in df.columns else [])].dropna()
+
+        fig_s = plt.figure(figsize=(8, 8))
+        gs = fig_s.add_gridspec(4, 4, hspace=0.05, wspace=0.05)
+        ax_main = fig_s.add_subplot(gs[1:, :-1])
+        ax_top = fig_s.add_subplot(gs[0, :-1], sharex=ax_main)
+        ax_right = fig_s.add_subplot(gs[1:, -1], sharey=ax_main)
+
+        if color_col and color_col in df.columns:
+            for grp, sub in clean.groupby(color_col):
+                ax_main.scatter(sub[x_col], sub[y_col], alpha=0.5, s=20, label=str(grp))
+            ax_main.legend(fontsize=7)
+        else:
+            ax_main.scatter(clean[x_col], clean[y_col], alpha=0.5, color="steelblue", s=20)
+
+        ax_top.hist(clean[x_col], bins=30, color="steelblue", alpha=0.7)
+        ax_right.hist(clean[y_col], bins=30, orientation="horizontal",
+                      color="steelblue", alpha=0.7)
+        ax_top.axis("off")
+        ax_right.axis("off")
+        ax_main.set_xlabel(x_col)
+        ax_main.set_ylabel(y_col)
+        fig_s.suptitle(f"Marginal Plot: {x_col} vs {y_col}")
+        fig_s.tight_layout()
+
+        color_arg = color_col if (color_col and color_col in df.columns) else None
+        fig_p = px.scatter(clean, x=x_col, y=y_col, color=color_arg,
+                           marginal_x="histogram", marginal_y="histogram",
+                           title=f"Marginal Plot: {x_col} vs {y_col}")
+
+        code = f"""# Marginal Plot
+import plotly.express as px
+fig = px.scatter(df, x='{x_col}', y='{y_col}',
+                 marginal_x='histogram', marginal_y='histogram',
+                 title='Marginal Plot')
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
+
+
+# ── Raincloud Plot ────────────────────────────────────────────────────
+
+def raincloud_plot(df: pd.DataFrame, x_col: str, y_col: str):
+    """Combined violin + box + strip plot (raincloud style)"""
+    try:
+        groups = df[x_col].dropna().unique()[:10]
+        fig_s, ax = plt.subplots(figsize=(max(8, len(groups) * 1.5), 6))
+
+        positions = np.arange(len(groups))
+        colors = plt.cm.tab10.colors
+
+        for i, grp in enumerate(groups):
+            sub = df[df[x_col] == grp][y_col].dropna().values
+            if len(sub) < 3:
+                continue
+            c = colors[i % len(colors)]
+            pos = positions[i]
+
+            # Violin (half)
+            vp = ax.violinplot([sub], positions=[pos], widths=0.6,
+                               showmeans=False, showmedians=False, showextrema=False)
+            for body in vp["bodies"]:
+                body.set_facecolor(c)
+                body.set_alpha(0.5)
+                # Clip to left half only
+                m = np.mean(body.get_paths()[0].vertices[:, 0])
+                body.get_paths()[0].vertices[:, 0] = np.clip(
+                    body.get_paths()[0].vertices[:, 0], -np.inf, m)
+
+            # Box
+            bp = ax.boxplot([sub], positions=[pos + 0.15], widths=0.1,
+                            patch_artist=True,
+                            boxprops=dict(facecolor=c, alpha=0.7),
+                            whiskerprops=dict(color=c),
+                            capprops=dict(color=c),
+                            medianprops=dict(color="white", linewidth=2),
+                            flierprops=dict(marker="o", markersize=3, alpha=0.5))
+
+            # Strip (jittered)
+            jitter = np.random.uniform(-0.05, 0.05, len(sub))
+            ax.scatter(np.full(len(sub), pos + 0.3) + jitter, sub,
+                       alpha=0.5, s=10, color=c)
+
+        ax.set_xticks(positions)
+        ax.set_xticklabels([str(g) for g in groups], rotation=45, ha="right")
+        ax.set_ylabel(y_col)
+        ax.set_title(f"Raincloud Plot: {y_col} by {x_col}")
+        fig_s.tight_layout()
+
+        # Plotly: violin with box and points
+        fig_p = px.violin(df[df[x_col].isin(groups)], x=x_col, y=y_col,
+                          box=True, points="all",
+                          title=f"Raincloud Plot: {y_col} by {x_col}")
+
+        code = f"""# Raincloud Plot (violin + box + strip)
+import plotly.express as px
+fig = px.violin(df, x='{x_col}', y='{y_col}', box=True, points='all',
+                title='Raincloud Plot')
+fig.show()
+"""
+        return fig_s, fig_p, code
+    except Exception as e:
+        return None, None, f"# Error: {e}"
