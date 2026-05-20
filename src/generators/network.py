@@ -28,7 +28,9 @@ from ..code_generator import get_code
 
 def sankey_diagram(df: pd.DataFrame, source_col: str, target_col: str, value_col: str):
     try:
-        all_nodes = list(pd.concat([df[source_col], df[target_col]]).astype(str).unique())
+        src, tgt, val = source_col, target_col, value_col
+        df_agg = df.groupby([src, tgt], as_index=False)[val].sum()
+        all_nodes = list(pd.concat([df_agg[src], df_agg[tgt]]).astype(str).unique())
         node_idx = {n: i for i, n in enumerate(all_nodes)}
 
         fig_p = go.Figure(go.Sankey(
@@ -38,9 +40,9 @@ def sankey_diagram(df: pd.DataFrame, source_col: str, target_col: str, value_col
                 thickness=20,
             ),
             link=dict(
-                source=[node_idx[str(s)] for s in df[source_col]],
-                target=[node_idx[str(t)] for t in df[target_col]],
-                value=df[value_col].tolist(),
+                source=[node_idx[str(s)] for s in df_agg[src]],
+                target=[node_idx[str(t)] for t in df_agg[tgt]],
+                value=df_agg[val].tolist(),
             )
         ))
         fig_p.update_layout(title="Sankey Diagram", font_size=12)
@@ -269,7 +271,6 @@ def alluvial_diagram(df: pd.DataFrame, stage_cols: list, value_col: str = None):
 
         fig_p = go.Figure(go.Parcats(
             dimensions=dimensions,
-            bundlecolors=True,
         ))
         fig_p.update_layout(title="Alluvial Diagram")
 

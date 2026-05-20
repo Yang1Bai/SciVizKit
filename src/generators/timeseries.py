@@ -20,7 +20,7 @@ from ..code_generator import get_code
 def _sort_by_x(df, x_col):
     try:
         df2 = df.copy()
-        df2[x_col] = pd.to_datetime(df2[x_col], infer_datetime_format=True, errors="coerce")
+        df2[x_col] = pd.to_datetime(df2[x_col], errors="coerce")
         return df2.sort_values(x_col)
     except Exception:
         return df.sort_values(x_col)

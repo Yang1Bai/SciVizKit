@@ -133,13 +133,16 @@ def pairplot(df: pd.DataFrame, cols: list):
     try:
         sub = df[cols].dropna() if cols else df.select_dtypes("number").dropna()
         sub = sub.head(500)  # cap for performance
+        num_df_cols = sub.columns.tolist()
 
         g = sns.pairplot(sub, diag_kind="kde", plot_kws={"alpha": 0.4})
         g.figure.suptitle("Pair Plot", y=1.02)
         g.figure.tight_layout()
 
+        fig_p = px.scatter_matrix(sub, title='Pair Plot')
+
         code = get_code("pairplot", cols=cols)
-        return g.figure, None, code
+        return g.figure, fig_p, code
     except Exception as e:
         return None, None, f"# Error: {e}"
 
@@ -270,7 +273,12 @@ def parallel_coords(df: pd.DataFrame, cols: list, color_col: str = None):
             "_color_", ax=ax, alpha=0.4
         )
         ax.set_title("Parallel Coordinates")
-        ax.get_legend().remove()
+        try:
+            legend = ax.get_legend()
+            if legend:
+                legend.remove()
+        except Exception:
+            pass
         fig_s.tight_layout()
 
         code = get_code("parallel_coords", cols=num_df.columns.tolist(), color_col=color_col)

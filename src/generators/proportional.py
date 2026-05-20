@@ -120,10 +120,14 @@ def waffle_chart(df: pd.DataFrame, label_col: str, value_col: str):
         shares.iloc[0] += diff
 
         grid_size = 10  # 10x10 = 100 cells
+        total_cells = grid_size * grid_size
         cells = []
         for i, (_, row) in enumerate(agg.iterrows()):
             cells.extend([i] * shares.iloc[i])
-        cells = cells[:100]
+        if len(cells) < total_cells:
+            cells = cells + [0] * (total_cells - len(cells))
+        else:
+            cells = cells[:total_cells]
         grid = np.array(cells[::-1]).reshape(grid_size, grid_size)
 
         colors = plt.cm.tab10.colors

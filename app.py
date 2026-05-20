@@ -103,6 +103,13 @@ init_state()
 from src.data_analyzer import DataAnalyzer
 from src.chart_registry import CHART_REGISTRY
 from src.themes.palettes import PALETTES
+import src.generators.distribution as dist_gen
+import src.generators.comparison as comp_gen
+import src.generators.correlation as corr_gen
+import src.generators.timeseries as ts_gen
+import src.generators.proportional as prop_gen
+import src.generators.network as net_gen
+import src.generators.scientific as sci_gen
 
 # ── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -321,8 +328,8 @@ with tab1:
 
     # Filter chart list
     def chart_matches(chart_id, chart):
-        if domain_key not in chart['domains'] and domain_key != "General":
-            return True  # still show, just deprioritize
+        if domain_key != "General" and domain_key not in chart['domains'] and "General" not in chart['domains']:
+            return False
         if search and search.lower() not in chart['name'].lower() and search.lower() not in chart.get('description', '').lower():
             return False
         if active_cat != "All" and chart['category'] != active_cat:
@@ -361,13 +368,6 @@ with tab1:
             cat = chart_meta['category']
             cid = chart_id
 
-            import src.generators.distribution as dist_gen
-            import src.generators.comparison as comp_gen
-            import src.generators.correlation as corr_gen
-            import src.generators.timeseries as ts_gen
-            import src.generators.proportional as prop_gen
-            import src.generators.network as net_gen
-            import src.generators.scientific as sci_gen
 
             # Smart column selection per chart
             def first(*cols):
@@ -455,7 +455,7 @@ with tab1:
                 elif cid == "contour_2d" and num0 and num1:
                     fig_static, fig_plotly, code_str = corr_gen.contour_2d(df, num0, num1)
                 elif cid == "connected_scatter" and num0 and num1:
-                    fig_static, fig_plotly, code_str = corr_gen.connected_scatter(df, num0, num1, num0)
+                    fig_static, fig_plotly, code_str = corr_gen.connected_scatter(df, num0, num1, cat0 or num1)
                 elif cid == "marginal_scatter" and num0 and num1:
                     fig_static, fig_plotly, code_str = corr_gen.marginal_scatter(df, num0, num1, color_col=cat0)
 
@@ -540,7 +540,10 @@ with tab1:
                 elif cid == "manhattan_plot" and cat0 and len(num_cols) >= 2:
                     fig_static, fig_plotly, code_str = sci_gen.manhattan_plot(df, cat0, num_cols[0], num_cols[1])
                 elif cid == "forest_plot" and cat0 and len(num_cols) >= 2:
-                    fig_static, fig_plotly, code_str = sci_gen.forest_plot(df, cat0, num_cols[0], num_cols[0], num_cols[1])
+                    if len(num_cols) >= 3:
+                        fig_static, fig_plotly, code_str = sci_gen.forest_plot(df, cat0, num_cols[0], num_cols[1], num_cols[2])
+                    else:
+                        fig_static, fig_plotly, code_str = sci_gen.forest_plot(df, cat0, num_cols[0], num_cols[1] if len(num_cols) > 1 else num_cols[0], None)
                 elif cid == "funnel_plot" and len(num_cols) >= 2:
                     fig_static, fig_plotly, code_str = sci_gen.funnel_plot(df, num_cols[0], num_cols[1])
                 elif cid == "calibration_curve" and len(num_cols) >= 2:
@@ -593,6 +596,8 @@ with tab1:
         except Exception as e:
             error = traceback.format_exc()
 
+        if fig_static:
+            plt.close(fig_static)
         return {
             'name': chart_meta['name'],
             'category': chart_meta['category'],

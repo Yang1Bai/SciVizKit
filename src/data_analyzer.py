@@ -50,13 +50,28 @@ class DataAnalyzer:
             elif pd.api.types.is_object_dtype(series) or pd.api.types.is_categorical_dtype(series):
                 # Try datetime parse
                 if series.dtype == object:
-                    try:
-                        pd.to_datetime(series.head(20))
-                        col_types[col] = "datetime"
-                        datetime_cols.append(col)
-                        continue
-                    except Exception:
-                        pass
+                    sample = series.head(20)
+                    if any(hint in col.lower() for hint in ['date', 'time', 'dt', 'timestamp', 'created', 'updated']):
+                        try:
+                            pd.to_datetime(sample)
+                            col_types[col] = "datetime"
+                            datetime_cols.append(col)
+                            continue
+                        except Exception:
+                            pass
+                    else:
+                        # Stricter: require non-integer-parseable strings
+                        try:
+                            pd.to_numeric(sample)
+                            # It's numeric-looking, skip datetime detection
+                        except Exception:
+                            try:
+                                pd.to_datetime(sample)
+                                col_types[col] = "datetime"
+                                datetime_cols.append(col)
+                                continue
+                            except Exception:
+                                pass
                 if n_unique == 2:
                     col_types[col] = "binary"
                     binary_cols.append(col)

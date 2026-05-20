@@ -166,7 +166,7 @@ def qq_plot(df: pd.DataFrame, x_col: str):
 def beeswarm_plot(df: pd.DataFrame, x_col: str, y_col: str):
     try:
         fig_s, ax = plt.subplots(figsize=(9, 6))
-        sns.swarmplot(data=df.sample(min(300, len(df))), x=x_col, y=y_col, ax=ax)
+        sns.swarmplot(data=df.sample(min(300, len(df)), random_state=42), x=x_col, y=y_col, ax=ax)
         ax.set_title("Beeswarm Plot")
         fig_s.tight_layout()
 
