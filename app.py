@@ -79,6 +79,7 @@ def init_state():
         "charts_generated": False,
         "chart_results": {},
         "filename": "",
+        "generated_charts": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -291,6 +292,15 @@ with st.sidebar:
     )
 
     st.markdown("---")
+    st.markdown("## 🖌️ Color Palette")
+    palette = st.selectbox(
+        "🎨 Color Palette",
+        ["Default", "Nature", "Science", "Cell", "ACS", "Colorblind Safe"],
+        help="Apply journal-standard color palettes to all charts"
+    )
+    st.session_state.palette = palette
+
+    st.markdown("---")
     st.markdown("### 📦 Examples")
     col1, col2, col3 = st.columns(3)
     if col1.button("General", use_container_width=True):
@@ -309,12 +319,65 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ── Landing page ──────────────────────────────────────────────────────
-if st.session_state.df is None:
-    st.markdown("---")
-    col_l, col_r = st.columns([3, 2])
-    with col_l:
-        st.markdown("""
+# ── Tabs ─────────────────────────────────────────────────────────────
+tab1, tab2 = st.tabs(["📊 Visualize Data", "🌳 Chart Guide"])
+
+with tab2:
+    st.subheader("🌳 Chart Selection Guide")
+    st.caption("Answer a few questions to find the right chart for your data.")
+
+    from src.decision_tree import DECISION_TREE, get_recommendations
+
+    if "dt_path" not in st.session_state:
+        st.session_state.dt_path = []
+
+    # Show current question
+    path = st.session_state.dt_path
+    node = DECISION_TREE["start"]
+    for choice in path:
+        options = node.get("options", {})
+        node = options.get(choice)
+        if node is None:
+            break
+        if isinstance(node, dict) and "recommend" in node:
+            break
+
+    if isinstance(node, dict) and "recommend" in node:
+        # Show recommendation
+        st.success(f"**Recommended charts:** {', '.join(node['recommend'])}")
+        st.info(f"💡 {node['reason']}")
+        # Show the recommended charts from registry
+        from src.chart_registry import CHART_REGISTRY as _CR
+        for chart_id in node["recommend"]:
+            if chart_id in _CR:
+                chart = _CR[chart_id]
+                st.markdown(f"**{chart['name']}** — {chart['description']}")
+        if st.button("🔄 Start Over"):
+            st.session_state.dt_path = []
+            st.rerun()
+    else:
+        # Show question
+        if node and "question" in node:
+            st.markdown(f"**{node['question']}**")
+            options = list(node.get("options", {}).keys())
+            choice = st.radio("Select:", options, key=f"dt_q_{len(path)}")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("→ Next"):
+                    st.session_state.dt_path.append(choice)
+                    st.rerun()
+            with col2:
+                if path and st.button("← Back"):
+                    st.session_state.dt_path.pop()
+                    st.rerun()
+
+with tab1:
+    # ── Landing page ──────────────────────────────────────────────────────
+    if st.session_state.df is None:
+        st.markdown("---")
+        col_l, col_r = st.columns([3, 2])
+        with col_l:
+            st.markdown("""
 ### ✨ What SciVizKit Can Do
 
 - 📊 **50+ chart types** across 7 categories
@@ -336,125 +399,122 @@ if st.session_state.df is None:
 | Network | Sankey, Network Graph, Dendrogram |
 | Scientific | Volcano, PCA, ROC Curve, Radar, Parity, Bland-Altman, Kaplan-Meier |
 """)
-    with col_r:
-        st.info("👈 **Upload your CSV/Excel** in the sidebar, or load an example dataset to get started.")
-        st.markdown("#### 🚀 Quick Start")
-        st.code("""
+        with col_r:
+            st.info("👈 **Upload your CSV/Excel** in the sidebar, or load an example dataset to get started.")
+            st.markdown("#### 🚀 Quick Start")
+            st.code("""
 # 1. Upload your data (sidebar)
 # 2. Select domain
 # 3. Click 'Generate All Visualizations'
 # 4. Explore 50+ charts!
-        """, language="bash")
+            """, language="bash")
 
-    st.stop()
+        st.stop()
 
+    # ── Data loaded — show overview ───────────────────────────────────────
+    df = st.session_state.df
+    analyzer = st.session_state.analyzer
 
-# ── Data loaded — show overview ───────────────────────────────────────
-df = st.session_state.df
-analyzer = st.session_state.analyzer
+    st.success(f"✅ Loaded **{st.session_state.filename}** — {df.shape[0]:,} rows × {df.shape[1]} columns")
 
-st.success(f"✅ Loaded **{st.session_state.filename}** — {df.shape[0]:,} rows × {df.shape[1]} columns")
+    # Data preview
+    with st.expander("📋 Data Preview", expanded=False):
+        st.dataframe(df.head(100), use_container_width=True)
 
-# Data preview
-with st.expander("📋 Data Preview", expanded=False):
-    st.dataframe(df.head(100), use_container_width=True)
+    # Column type summary
+    with st.expander("🔍 Column Type Analysis", expanded=True):
+        p = analyzer.profile
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("🔢 Numeric", len(p["numeric_cols"]))
+        c2.metric("🏷️ Categorical", len(p["categorical_cols"]))
+        c3.metric("📅 Datetime", len(p["datetime_cols"]))
+        c4.metric("⚡ Binary", len(p["binary_cols"]))
 
-# Column type summary
-with st.expander("🔍 Column Type Analysis", expanded=True):
-    p = analyzer.profile
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🔢 Numeric", len(p["numeric_cols"]))
-    c2.metric("🏷️ Categorical", len(p["categorical_cols"]))
-    c3.metric("📅 Datetime", len(p["datetime_cols"]))
-    c4.metric("⚡ Binary", len(p["binary_cols"]))
+        if p["numeric_cols"]:
+            st.markdown(f"**Numeric:** `{'` · `'.join(p['numeric_cols'])}`")
+        if p["categorical_cols"]:
+            st.markdown(f"**Categorical:** `{'` · `'.join(p['categorical_cols'])}`")
+        if p["datetime_cols"]:
+            st.markdown(f"**Datetime:** `{'` · `'.join(p['datetime_cols'])}`")
 
-    if p["numeric_cols"]:
-        st.markdown(f"**Numeric:** `{'` · `'.join(p['numeric_cols'])}`")
-    if p["categorical_cols"]:
-        st.markdown(f"**Categorical:** `{'` · `'.join(p['categorical_cols'])}`")
-    if p["datetime_cols"]:
-        st.markdown(f"**Datetime:** `{'` · `'.join(p['datetime_cols'])}`")
+    # Compatible charts
+    compat = analyzer.get_compatible_charts(domain)
+    st.markdown(f"**{len(compat)} compatible charts** found for domain: **{domain}**")
 
-# Compatible charts
-compat = analyzer.get_compatible_charts(domain)
-st.markdown(f"**{len(compat)} compatible charts** found for domain: **{domain}**")
+    # ── Generate button ───────────────────────────────────────────────────
+    if st.button("🚀 Generate All Visualizations", type="primary", use_container_width=True):
+        gen_modules = _load_generators()
+        with st.spinner("Building your visualizations…"):
+            results = generate_charts(df, analyzer, domain, compat, gen_modules)
+        st.session_state.chart_results = results
+        st.session_state.charts_generated = True
+        st.rerun()
 
-# ── Generate button ───────────────────────────────────────────────────
-if st.button("🚀 Generate All Visualizations", type="primary", use_container_width=True):
-    gen_modules = _load_generators()
-    with st.spinner("Building your visualizations…"):
-        results = generate_charts(df, analyzer, domain, compat, gen_modules)
-    st.session_state.chart_results = results
-    st.session_state.charts_generated = True
-    st.rerun()
+    # ── Show charts grouped by category ──────────────────────────────────
+    if st.session_state.charts_generated and st.session_state.chart_results:
+        results = st.session_state.chart_results
 
+        # Group by category
+        from collections import defaultdict
+        by_cat = defaultdict(list)
+        for cid, result in results.items():
+            meta = CHART_REGISTRY.get(cid, {})
+            cat = meta.get("category", "Other")
+            by_cat[cat].append((cid, meta, result))
 
-# ── Show charts grouped by category ──────────────────────────────────
-if st.session_state.charts_generated and st.session_state.chart_results:
-    results = st.session_state.chart_results
+        cat_order = ["Distribution", "Comparison", "Correlation",
+                     "Time Series", "Proportional", "Network", "Scientific"]
+        cats_present = [c for c in cat_order if c in by_cat] +                        [c for c in by_cat if c not in cat_order]
 
-    # Group by category
-    from collections import defaultdict
-    by_cat = defaultdict(list)
-    for cid, result in results.items():
-        meta = CHART_REGISTRY.get(cid, {})
-        cat = meta.get("category", "Other")
-        by_cat[cat].append((cid, meta, result))
+        for cat in cats_present:
+            items = by_cat[cat]
+            st.markdown(f'<div class="cat-header">📊 {cat}</div>', unsafe_allow_html=True)
 
-    cat_order = ["Distribution", "Comparison", "Correlation",
-                 "Time Series", "Proportional", "Network", "Scientific"]
-    cats_present = [c for c in cat_order if c in by_cat] + \
-                   [c for c in by_cat if c not in cat_order]
+            # 3-column grid
+            cols = st.columns(3)
+            for idx, (cid, meta, (fig_s, fig_p, code)) in enumerate(items):
+                col = cols[idx % 3]
+                with col:
+                    with st.expander(f"**{meta.get('name', cid)}**", expanded=False):
+                        has_content = fig_s is not None or fig_p is not None
 
-    for cat in cats_present:
-        items = by_cat[cat]
-        st.markdown(f'<div class="cat-header">📊 {cat}</div>', unsafe_allow_html=True)
+                        if not has_content:
+                            st.warning(f"⚠️ Chart could not be generated.\n\n`{code[:200]}`")
+                        else:
+                            # Show chart based on mode
+                            if chart_mode in ("Interactive", "Both") and fig_p is not None:
+                                st.plotly_chart(fig_p, use_container_width=True, key=f"plotly_{cid}")
+                            if chart_mode in ("Static", "Both") and fig_s is not None:
+                                st.pyplot(fig_s, use_container_width=True)
+                            elif chart_mode == "Interactive" and fig_p is None and fig_s is not None:
+                                # fallback to static if no interactive
+                                st.pyplot(fig_s, use_container_width=True)
 
-        # 3-column grid
-        cols = st.columns(3)
-        for idx, (cid, meta, (fig_s, fig_p, code)) in enumerate(items):
-            col = cols[idx % 3]
-            with col:
-                with st.expander(f"**{meta.get('name', cid)}**", expanded=False):
-                    has_content = fig_s is not None or fig_p is not None
+                            # When to use
+                            st.info(f"💡 **When to use:** {meta.get('when_to_use', '')}")
 
-                    if not has_content:
-                        st.warning(f"⚠️ Chart could not be generated.\n\n`{code[:200]}`")
-                    else:
-                        # Show chart based on mode
-                        if chart_mode in ("Interactive", "Both") and fig_p is not None:
-                            st.plotly_chart(fig_p, use_container_width=True, key=f"plotly_{cid}")
-                        if chart_mode in ("Static", "Both") and fig_s is not None:
-                            st.pyplot(fig_s, use_container_width=True)
-                        elif chart_mode == "Interactive" and fig_p is None and fig_s is not None:
-                            # fallback to static if no interactive
-                            st.pyplot(fig_s, use_container_width=True)
+                            # Download PNG
+                            if fig_s is not None:
+                                try:
+                                    png_bytes = fig_to_png(fig_s)
+                                    st.download_button(
+                                        label="⬇️ Download PNG",
+                                        data=png_bytes,
+                                        file_name=f"{cid}.png",
+                                        mime="image/png",
+                                        key=f"dl_{cid}",
+                                        use_container_width=True,
+                                    )
+                                except Exception:
+                                    pass
 
-                        # When to use
-                        st.info(f"💡 **When to use:** {meta.get('when_to_use', '')}")
+                            # Code snippet
+                            if code and not code.startswith("# Error"):
+                                with st.expander("📋 Copy Code", expanded=False):
+                                    st.code(code, language="python")
 
-                        # Download PNG
-                        if fig_s is not None:
-                            try:
-                                png_bytes = fig_to_png(fig_s)
-                                st.download_button(
-                                    label="⬇️ Download PNG",
-                                    data=png_bytes,
-                                    file_name=f"{cid}.png",
-                                    mime="image/png",
-                                    key=f"dl_{cid}",
-                                    use_container_width=True,
-                                )
-                            except Exception:
-                                pass
-
-                        # Code snippet
-                        if code and not code.startswith("# Error"):
-                            with st.expander("📋 Copy Code", expanded=False):
-                                st.code(code, language="python")
-
-    st.markdown("---")
-    st.markdown(
-        f"✅ Generated **{len([r for r in results.values() if r[0] is not None or r[1] is not None])}** "
-        f"charts out of **{len(results)}** compatible types."
-    )
+        st.markdown("---")
+        st.markdown(
+            f"✅ Generated **{len([r for r in results.values() if r[0] is not None or r[1] is not None])}** "
+            f"charts out of **{len(results)}** compatible types."
+        )
