@@ -10,6 +10,15 @@
 
 ---
 
+## 🚀 Live Demo | 在线体验
+
+**👉 [https://scivizkit-hvbzujsahst6uec2pupvrx.streamlit.app/](https://scivizkit-hvbzujsahst6uec2pupvrx.streamlit.app/)**
+
+> No installation needed — upload your data and explore 80+ chart types instantly.
+> 无需安装 — 直接上传数据，即刻探索 80+ 种科研图表。
+
+---
+
 > **[English](#english) | [中文](#中文)**
 
 ---
