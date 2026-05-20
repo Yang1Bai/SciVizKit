@@ -320,7 +320,7 @@ st.markdown(
 )
 
 # ── Tabs ─────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["📊 Visualize Data", "🌳 Chart Guide"])
+tab1, tab2, tab3 = st.tabs(["📊 Visualize Data", "🌳 Chart Guide", "🖼️ Figure Panel"])
 
 with tab2:
     st.subheader("🌳 Chart Selection Guide")
@@ -518,3 +518,74 @@ with tab1:
             f"✅ Generated **{len([r for r in results.values() if r[0] is not None or r[1] is not None])}** "
             f"charts out of **{len(results)}** compatible types."
         )
+
+with tab3:
+    st.subheader("🖼️ Figure Panel Builder")
+    st.caption("Combine multiple charts into a single publication-ready figure.")
+
+    # Check if charts have been generated
+    if not st.session_state.get('generated_charts'):
+        st.info("👆 First go to **Visualize Data** tab, upload data, and generate charts.")
+    else:
+        generated = st.session_state.get('generated_charts', {})
+        available = list(generated.keys())
+
+        st.markdown("**Step 1: Select charts to include**")
+        selected = st.multiselect(
+            "Choose charts for the panel:",
+            options=available,
+            default=available[:min(4, len(available))]
+        )
+
+        st.markdown("**Step 2: Layout settings**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            ncols = st.slider("Columns", 1, 4, 2)
+        with col2:
+            panel_w = st.slider("Panel width (in)", 4, 10, 6)
+        with col3:
+            panel_h = st.slider("Panel height (in)", 3, 8, 4)
+
+        add_labels = st.checkbox("Add A, B, C... panel labels", value=True)
+        export_dpi = st.select_slider("Export DPI", options=[72, 150, 300, 600], value=300)
+
+        if selected and st.button("🖼️ Build Figure Panel", type="primary"):
+            from src.figure_panel import combine_figures, fig_to_bytes
+
+            figs_to_combine = []
+            for chart_name in selected:
+                fig_static = generated[chart_name].get('fig_static')
+                if fig_static is not None:
+                    figs_to_combine.append((chart_name, fig_static))
+
+            if figs_to_combine:
+                with st.spinner("Building combined figure..."):
+                    combined_fig = combine_figures(
+                        figs_to_combine,
+                        ncols=ncols,
+                        panel_labels=add_labels,
+                        figsize_per_panel=(panel_w, panel_h),
+                        dpi=export_dpi
+                    )
+
+                if combined_fig:
+                    st.pyplot(combined_fig)
+
+                    # Download buttons
+                    png_bytes = fig_to_bytes(combined_fig, dpi=export_dpi, fmt='png')
+                    st.download_button(
+                        "⬇️ Download PNG (Publication Quality)",
+                        data=png_bytes,
+                        file_name="figure_panel.png",
+                        mime="image/png"
+                    )
+
+                    svg_bytes = fig_to_bytes(combined_fig, dpi=export_dpi, fmt='svg')
+                    st.download_button(
+                        "⬇️ Download SVG (Vector)",
+                        data=svg_bytes,
+                        file_name="figure_panel.svg",
+                        mime="image/svg+xml"
+                    )
+            else:
+                st.warning("No static figures available for selected charts. Generate charts first.")
