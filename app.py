@@ -1,591 +1,926 @@
 """
 SciVizKit — Scientific Visualization Toolkit
-Main Streamlit application
+Inspire the best visualization for your research data.
 """
-
-import io
-import sys
-import os
-import warnings
-warnings.filterwarnings("ignore")
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import io, traceback, sys
+sys.path.insert(0, '.')
 
-# Add src to path
-sys.path.insert(0, os.path.dirname(__file__))
-
-from src.data_analyzer import DataAnalyzer
-from src.chart_registry import CHART_REGISTRY
-
-# ── Page config ──────────────────────────────────────────────────────
 st.set_page_config(
     page_title="SciVizKit",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-# ── Custom CSS ────────────────────────────────────────────────────────
+# ── Custom CSS ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-.main-title { font-size: 2.5rem; font-weight: 800; color: #667eea; }
-.subtitle { font-size: 1.1rem; color: #666; margin-bottom: 1rem; }
-.metric-card {
-    background: linear-gradient(135deg, #667eea22, #764ba222);
-    border-radius: 12px; padding: 16px; margin: 4px;
-    border: 1px solid #667eea44;
+/* Chart card hover effect */
+div[data-testid="stImage"] img {
+    border-radius: 8px;
+    transition: transform 0.2s;
+    cursor: pointer;
 }
-.cat-header {
-    font-size: 1.3rem; font-weight: 700;
-    border-bottom: 3px solid #667eea;
-    padding-bottom: 6px; margin: 24px 0 12px 0;
+div[data-testid="stImage"] img:hover {
+    transform: scale(1.02);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
 }
-.chart-badge {
+/* Category badge */
+.cat-badge {
     display: inline-block;
-    background: #667eea; color: white;
-    border-radius: 12px; padding: 2px 10px;
-    font-size: 0.75rem; margin: 2px;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+/* Favorite star button */
+.stButton button[title="favorite"] {
+    background: none;
+    border: none;
+    font-size: 20px;
+    padding: 0;
+}
+/* Chart name */
+.chart-name {
+    font-weight: 600;
+    font-size: 13px;
+    color: #262730;
+    margin: 4px 0 2px 0;
+}
+/* Progress section */
+.gen-progress {
+    padding: 12px;
+    background: #f0f2f6;
+    border-radius: 8px;
+    margin-bottom: 12px;
 }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Category Colors ──────────────────────────────────────────────────────────
+CATEGORY_COLORS = {
+    "Distribution": "#4DBBD5",
+    "Comparison": "#E64B35",
+    "Correlation": "#00A087",
+    "Time Series": "#3C5488",
+    "Proportional": "#F39B7F",
+    "Network": "#8491B4",
+    "Scientific": "#91D1C2",
+    "Text": "#DC0000",
+    "Geographic": "#7E6148",
+    "3D": "#B09C85",
+}
 
-# ── Lazy generator imports ────────────────────────────────────────────
-@st.cache_resource
-def _load_generators():
-    from src.generators import distribution, comparison, correlation
-    from src.generators import timeseries, proportional, network, scientific
-    return {
-        "distribution": distribution,
-        "comparison": comparison,
-        "correlation": correlation,
-        "timeseries": timeseries,
-        "proportional": proportional,
-        "network": network,
-        "scientific": scientific,
-    }
-
-
-# ── Session state init ────────────────────────────────────────────────
+# ── Session State Init ───────────────────────────────────────────────────────
 def init_state():
     defaults = {
-        "df": None,
-        "analyzer": None,
-        "charts_generated": False,
-        "chart_results": {},
-        "filename": "",
-        "generated_charts": {},
+        'generated_charts': {},     # {chart_id: {name, category, fig_static, fig_plotly, code_str, error}}
+        'favorites': set(),          # set of chart_ids
+        'search_query': '',
+        'active_category': 'All',
+        'dt_path': [],
+        'df': None,
+        'profile': None,
+        'show_chart_modal': None,    # chart_id to show in detail view
+        'generation_progress': {},   # {category: status}  'pending'|'done'|'error'
+        'col_mapping': {},           # {role: col_name}  e.g. {'x': 'age', 'y': 'income'}
+        'chart_mode': 'Both',
+        'palette': 'Default',
+        'domain': 'General',
     }
     for k, v in defaults.items():
         if k not in st.session_state:
             st.session_state[k] = v
 
-
 init_state()
 
+# ── Imports ──────────────────────────────────────────────────────────────────
+from src.data_analyzer import DataAnalyzer
+from src.chart_registry import CHART_REGISTRY
+from src.themes.palettes import PALETTES
 
-# ── Helper: load example CSVs ─────────────────────────────────────────
-def load_example(name: str):
-    path = os.path.join(os.path.dirname(__file__), "examples", f"{name}.csv")
-    if os.path.exists(path):
-        df = pd.read_csv(path)
-        st.session_state.df = df
-        st.session_state.analyzer = DataAnalyzer(df)
-        st.session_state.charts_generated = False
-        st.session_state.chart_results = {}
-        st.session_state.filename = f"{name}.csv"
-        st.rerun()
-    else:
-        st.error(f"Example file not found: {path}")
-
-
-# ── Helper: save fig to bytes ─────────────────────────────────────────
-def fig_to_png(fig) -> bytes:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    buf.seek(0)
-    return buf.getvalue()
-
-
-# ── Auto-select columns for a chart ──────────────────────────────────
-def pick_cols(chart_id: str, analyzer: DataAnalyzer) -> dict:
-    """Heuristically pick appropriate columns for each chart type."""
-    num = analyzer.numeric_cols
-    cat = analyzer.categorical_cols
-    dt = analyzer.datetime_cols
-    all_cols = list(analyzer.df.columns)
-
-    x, y, c, s = (num + [None])[0], (num + [None, None])[1], (cat + [None])[0], (num + [None, None, None])[2]
-    label = (cat + [None])[0]
-    val1 = (num + [None])[0]
-    val2 = (num + [None, None])[1]
-    dt_col = (dt + [None])[0]
-
-    mapping = {
-        "histogram":     dict(x_col=x, color_col=c),
-        "kde":           dict(x_col=x, color_col=c),
-        "violin":        dict(x_col=c or (cat + all_cols + [None])[0], y_col=x),
-        "boxplot":       dict(x_col=c or (cat + all_cols + [None])[0], y_col=x),
-        "stripplot":     dict(x_col=c or (cat + all_cols + [None])[0], y_col=x),
-        "beeswarm":      dict(x_col=c or (cat + all_cols + [None])[0], y_col=x),
-        "ecdf":          dict(x_col=x),
-        "qqplot":        dict(x_col=x),
-        "bar":           dict(x_col=c or all_cols[0], y_col=x or all_cols[1] if len(all_cols)>1 else all_cols[0]),
-        "grouped_bar":   dict(x_col=c or all_cols[0], y_col=x, color_col=(cat + [None, None])[1] or c),
-        "stacked_bar":   dict(x_col=c or all_cols[0], y_col=x, color_col=(cat + [None, None])[1] or c),
-        "lollipop":      dict(x_col=c or all_cols[0], y_col=x),
-        "dumbbell":      dict(label_col=c or all_cols[0], val1_col=val1, val2_col=val2),
-        "dotplot":       dict(x_col=c or all_cols[0], y_col=x),
-        "slope":         dict(label_col=c or all_cols[0], val1_col=val1, val2_col=val2),
-        "waterfall":     dict(label_col=c or all_cols[0], value_col=x),
-        "errorbar":      dict(x_col=c or all_cols[0], y_col=x, err_col=val2 or x),
-        "scatter":       dict(x_col=x, y_col=y, color_col=c),
-        "bubble":        dict(x_col=x, y_col=y, size_col=s or val1, color_col=c),
-        "hexbin":        dict(x_col=x, y_col=y),
-        "corr_heatmap":  dict(),
-        "pairplot":      dict(cols=num[:5] if num else []),
-        "parallel_coords": dict(cols=num[:6] if num else [], color_col=c),
-        "line":          dict(x_col=dt_col or x, y_cols=[y] if y else [x]),
-        "area":          dict(x_col=dt_col or x, y_col=y or x),
-        "stacked_area":  dict(x_col=dt_col or x, y_cols=num[:3] if len(num)>=2 else [x, y] if y else [x]),
-        "step_line":     dict(x_col=dt_col or x, y_col=y or x),
-        "pie":           dict(label_col=c or all_cols[0], value_col=x),
-        "donut":         dict(label_col=c or all_cols[0], value_col=x),
-        "treemap":       dict(label_col=c or all_cols[0], value_col=x),
-        "sunburst":      dict(label_col=c or all_cols[0],
-                              parent_col=(cat + [None, None])[1] or c,
-                              value_col=x),
-        "nightingale":   dict(label_col=c or all_cols[0], value_col=x),
-        "sankey":        dict(source_col=c or all_cols[0],
-                              target_col=(cat + [None, None])[1] or c,
-                              value_col=x),
-        "network_graph": dict(source_col=c or all_cols[0],
-                              target_col=(cat + [None, None])[1] or all_cols[1] if len(all_cols)>1 else c),
-        "dendrogram":    dict(cols=num[:8] if num else []),
-        "volcano":       dict(fc_col=x, pval_col=y or x),
-        "pca_plot":      dict(feature_cols=num[:10] if num else [], color_col=c),
-        "roc_curve":     dict(y_true_col=x, y_score_col=y or x),
-        "radar":         dict(label_col=c or all_cols[0], value_cols=num[:6] if num else [x]),
-        "parity_plot":   dict(actual_col=x, predicted_col=y or x),
-        "bland_altman":  dict(method1_col=x, method2_col=y or x),
-        "kaplan_meier":  dict(duration_col=x, event_col=y or x, group_col=c),
-    }
-    return mapping.get(chart_id, {})
-
-
-# ── Generate all charts ───────────────────────────────────────────────
-def generate_charts(df: pd.DataFrame, analyzer: DataAnalyzer,
-                    domain: str, chart_ids: list, gen_modules: dict) -> dict:
-    results = {}
-    progress = st.progress(0, text="Generating charts…")
-    total = len(chart_ids)
-
-    # Chart ID → generator function mapping
-    fn_map = {
-        "histogram":     ("distribution", "histogram"),
-        "kde":           ("distribution", "kde_plot"),
-        "violin":        ("distribution", "violin_plot"),
-        "boxplot":       ("distribution", "box_plot"),
-        "stripplot":     ("distribution", "strip_plot"),
-        "beeswarm":      ("distribution", "beeswarm_plot"),
-        "ecdf":          ("distribution", "ecdf_plot"),
-        "qqplot":        ("distribution", "qq_plot"),
-        "bar":           ("comparison", "bar_chart"),
-        "grouped_bar":   ("comparison", "grouped_bar"),
-        "stacked_bar":   ("comparison", "stacked_bar"),
-        "lollipop":      ("comparison", "lollipop_chart"),
-        "dumbbell":      ("comparison", "dumbbell_chart"),
-        "dotplot":       ("comparison", "dot_plot"),
-        "slope":         ("comparison", "slope_chart"),
-        "waterfall":     ("comparison", "waterfall_chart"),
-        "errorbar":      ("comparison", "error_bar_plot"),
-        "scatter":       ("correlation", "scatter_plot"),
-        "bubble":        ("correlation", "bubble_chart"),
-        "hexbin":        ("correlation", "hexbin_plot"),
-        "corr_heatmap":  ("correlation", "corr_heatmap"),
-        "pairplot":      ("correlation", "pairplot"),
-        "parallel_coords": ("correlation", "parallel_coords"),
-        "line":          ("timeseries", "line_chart"),
-        "area":          ("timeseries", "area_chart"),
-        "stacked_area":  ("timeseries", "stacked_area"),
-        "step_line":     ("timeseries", "step_line"),
-        "pie":           ("proportional", "pie_chart"),
-        "donut":         ("proportional", "donut_chart"),
-        "treemap":       ("proportional", "treemap"),
-        "sunburst":      ("proportional", "sunburst"),
-        "nightingale":   ("proportional", "nightingale_rose"),
-        "sankey":        ("network", "sankey_diagram"),
-        "network_graph": ("network", "network_graph"),
-        "dendrogram":    ("network", "dendrogram_plot"),
-        "volcano":       ("scientific", "volcano_plot"),
-        "pca_plot":      ("scientific", "pca_plot"),
-        "roc_curve":     ("scientific", "roc_curve_plot"),
-        "radar":         ("scientific", "radar_chart"),
-        "parity_plot":   ("scientific", "parity_plot"),
-        "bland_altman":  ("scientific", "bland_altman_plot"),
-        "kaplan_meier":  ("scientific", "kaplan_meier_plot"),
-    }
-
-    for i, chart_id in enumerate(chart_ids):
-        progress.progress((i + 1) / total, text=f"Generating: {CHART_REGISTRY[chart_id]['name']}")
-        try:
-            mod_key, fn_name = fn_map[chart_id]
-            mod = gen_modules[mod_key]
-            fn = getattr(mod, fn_name)
-            kwargs = pick_cols(chart_id, analyzer)
-            # Filter None values except where required
-            kwargs_clean = {k: v for k, v in kwargs.items() if v is not None}
-            result = fn(df, **kwargs_clean)
-            results[chart_id] = result
-        except Exception as ex:
-            results[chart_id] = (None, None, f"# Error generating {chart_id}: {ex}")
-
-    progress.empty()
-    return results
-
-
-# ── Sidebar ───────────────────────────────────────────────────────────
+# ── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.image("https://img.shields.io/badge/SciVizKit-v0.1.0-667eea?style=for-the-badge", use_column_width=True)
-    st.markdown("## 📁 Data Input")
+    st.image("https://img.icons8.com/fluency/96/microscope.png", width=60)
+    st.title("SciVizKit")
+    st.caption("Scientific Visualization Toolkit")
+    st.divider()
 
-    uploaded = st.file_uploader(
-        "Upload CSV or Excel",
+    uploaded_file = st.file_uploader(
+        "📂 Upload Data",
         type=["csv", "xlsx", "xls"],
-        help="Max 200 MB"
+        help="CSV or Excel file up to 200MB"
     )
 
-    if uploaded:
-        try:
-            if uploaded.name.endswith((".xlsx", ".xls")):
-                df_new = pd.read_excel(uploaded)
-            else:
-                df_new = pd.read_csv(uploaded)
-            if not df_new.equals(st.session_state.df if st.session_state.df is not None else pd.DataFrame()):
-                st.session_state.df = df_new
-                st.session_state.analyzer = DataAnalyzer(df_new)
-                st.session_state.charts_generated = False
-                st.session_state.chart_results = {}
-                st.session_state.filename = uploaded.name
-        except Exception as e:
-            st.error(f"Failed to load file: {e}")
+    st.divider()
 
-    st.markdown("---")
-    st.markdown("## 🔭 Domain")
-    domain = st.radio(
-        "Select research domain:",
-        ["General", "Biology", "Chemistry/Materials", "Medicine", "Physics", "Social Science"],
-        index=0,
-    )
+    domain = st.selectbox("🔬 Research Domain", [
+        "General", "Biology & Genomics", "Chemistry & Materials",
+        "Medicine & Clinical", "Physics & Engineering", "Social Science"
+    ])
+    st.session_state.domain = domain
 
-    st.markdown("---")
-    st.markdown("## 🎨 Chart Mode")
     chart_mode = st.radio(
-        "Display mode:",
-        ["Interactive", "Static", "Both"],
-        index=0,
+        "📊 Chart Mode",
+        ["Static (Publication)", "Interactive", "Both"],
+        index=2,
+        help="Static = matplotlib 300 DPI. Interactive = plotly."
     )
+    st.session_state.chart_mode = chart_mode
 
-    st.markdown("---")
-    st.markdown("## 🖌️ Color Palette")
     palette = st.selectbox(
         "🎨 Color Palette",
-        ["Default", "Nature", "Science", "Cell", "ACS", "Colorblind Safe"],
-        help="Apply journal-standard color palettes to all charts"
+        list(PALETTES.keys()),
+        help="Journal-standard color palettes"
     )
     st.session_state.palette = palette
 
-    st.markdown("---")
-    st.markdown("### 📦 Examples")
+    # Show palette preview swatches
+    colors = PALETTES[palette]["categorical"][:6]
+    swatch_html = "".join([
+        f'<span style="display:inline-block;width:18px;height:18px;background:{c};border-radius:3px;margin:1px"></span>'
+        for c in colors
+    ])
+    st.markdown(swatch_html, unsafe_allow_html=True)
+    st.caption(PALETTES[palette]["description"])
+
+    st.divider()
+
+    if st.session_state.favorites:
+        st.markdown(f"⭐ **{len(st.session_state.favorites)} favorited**")
+
+    st.divider()
+    st.markdown("📖 [GitHub](https://github.com/Yang1Bai/SciVizKit)")
+    st.caption("v0.4 · MIT License")
+
+# ── Load Data ────────────────────────────────────────────────────────────────
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+
+        # Reset if new file
+        if st.session_state.df is None or st.session_state.df.shape != df.shape:
+            st.session_state.df = df
+            st.session_state.generated_charts = {}
+            st.session_state.generation_progress = {}
+            analyzer = DataAnalyzer(df)
+            st.session_state.profile = analyzer
+            # Smart defaults for column mapping
+            profile = analyzer
+            st.session_state.col_mapping = {
+                'x': profile.categorical_cols[0] if profile.categorical_cols else (profile.numeric_cols[0] if profile.numeric_cols else None),
+                'y': profile.numeric_cols[0] if profile.numeric_cols else None,
+                'color': profile.categorical_cols[1] if len(profile.categorical_cols) > 1 else None,
+                'size': profile.numeric_cols[1] if len(profile.numeric_cols) > 1 else None,
+            }
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        st.stop()
+else:
+    df = None
+
+# ── Landing Page ─────────────────────────────────────────────────────────────
+if df is None:
+    st.title("🔬 SciVizKit")
+    st.subheader("Inspire the best visualization for your research data")
+    st.markdown("*激发科研数据最佳可视化方案*")
+    st.markdown("")
+
     col1, col2, col3 = st.columns(3)
-    if col1.button("General", use_container_width=True):
-        load_example("sample_general")
-    if col2.button("Biology", use_container_width=True):
-        load_example("sample_biology")
-    if col3.button("Chemistry", use_container_width=True):
-        load_example("sample_chemistry")
+    with col1:
+        st.markdown("### 📊 80+ Chart Types")
+        st.markdown("Distribution, comparison, correlation, time series, network, scientific specialty, 3D, geographic, and more.")
+    with col2:
+        st.markdown("### 🌳 Smart Guide")
+        st.markdown("Not sure which chart to use? Answer a few questions and get personalized recommendations.")
+    with col3:
+        st.markdown("### 🖼️ Figure Panel")
+        st.markdown("Combine your favorite charts into a publication-ready multi-panel figure. Download PNG/SVG at 300 DPI.")
 
+    st.markdown("---")
+    st.markdown("### 🚀 Quick Start with Example Data")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("🧬 Biology / Genomics", use_container_width=True):
+            st.session_state['load_example'] = 'biology'
+    with col2:
+        if st.button("⚗️ Chemistry / Materials", use_container_width=True):
+            st.session_state['load_example'] = 'chemistry'
+    with col3:
+        if st.button("📊 General Dataset", use_container_width=True):
+            st.session_state['load_example'] = 'general'
 
-# ── Main content ──────────────────────────────────────────────────────
-st.markdown('<div class="main-title">🔬 SciVizKit</div>', unsafe_allow_html=True)
-st.markdown(
-    '<div class="subtitle">Scientific Visualization Toolkit · '
-    '激发科研数据最佳可视化方案</div>',
-    unsafe_allow_html=True
-)
+    # Load example data if button pressed
+    if st.session_state.get('load_example'):
+        example = st.session_state.pop('load_example')
+        path_map = {
+            'biology': 'examples/sample_biology.csv',
+            'chemistry': 'examples/sample_chemistry.csv',
+            'general': 'examples/sample_general.csv',
+        }
+        try:
+            df = pd.read_csv(path_map[example])
+            st.session_state.df = df
+            st.session_state.generated_charts = {}
+            analyzer = DataAnalyzer(df)
+            st.session_state.profile = analyzer
+            st.session_state.col_mapping = {
+                'x': analyzer.categorical_cols[0] if analyzer.categorical_cols else (analyzer.numeric_cols[0] if analyzer.numeric_cols else None),
+                'y': analyzer.numeric_cols[0] if analyzer.numeric_cols else None,
+                'color': analyzer.categorical_cols[1] if len(analyzer.categorical_cols) > 1 else None,
+                'size': analyzer.numeric_cols[1] if len(analyzer.numeric_cols) > 1 else None,
+            }
+            st.rerun()
+        except Exception as e:
+            st.error(f"Could not load example: {e}")
 
-# ── Tabs ─────────────────────────────────────────────────────────────
+    st.stop()
+
+# ── Main App (data loaded) ────────────────────────────────────────────────────
+df = st.session_state.df
+profile = st.session_state.profile
+
+# Data summary bar
+with st.expander(f"📋 Data: **{df.shape[0]:,}** rows × **{df.shape[1]}** columns", expanded=False):
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.dataframe(df.head(5), use_container_width=True)
+    with col2:
+        st.markdown("**Column Types**")
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            nuniq = df[col].nunique()
+            icon = "🔢" if pd.api.types.is_numeric_dtype(df[col]) else ("📅" if pd.api.types.is_datetime64_any_dtype(df[col]) else "🔤")
+            st.markdown(f"{icon} `{col}` — {dtype}, {nuniq} unique")
+
+# Column mapping panel
+with st.expander("🎛️ Column Mapping", expanded=False):
+    st.caption("Set which columns map to chart roles. Used as smart defaults for all charts.")
+    cols = list(df.columns)
+    none_option = ["(none)"] + cols
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        x_default = st.session_state.col_mapping.get('x')
+        x_idx = none_option.index(x_default) if x_default in none_option else 0
+        st.session_state.col_mapping['x'] = st.selectbox("X axis / Category", none_option, index=x_idx) or None
+    with c2:
+        y_default = st.session_state.col_mapping.get('y')
+        y_idx = none_option.index(y_default) if y_default in none_option else 0
+        st.session_state.col_mapping['y'] = st.selectbox("Y axis / Value", none_option, index=y_idx) or None
+    with c3:
+        color_default = st.session_state.col_mapping.get('color')
+        color_idx = none_option.index(color_default) if color_default in none_option else 0
+        st.session_state.col_mapping['color'] = st.selectbox("Color / Group", none_option, index=color_idx) or None
+    with c4:
+        size_default = st.session_state.col_mapping.get('size')
+        size_idx = none_option.index(size_default) if size_default in none_option else 0
+        st.session_state.col_mapping['size'] = st.selectbox("Size / Weight", none_option, index=size_idx) or None
+
+    if st.button("🔄 Re-generate charts with new mapping"):
+        st.session_state.generated_charts = {}
+        st.session_state.generation_progress = {}
+        st.rerun()
+
+st.markdown("")
+
+# ── TABS ─────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs(["📊 Visualize Data", "🌳 Chart Guide", "🖼️ Figure Panel"])
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1: VISUALIZE DATA
+# ══════════════════════════════════════════════════════════════════════════════
+with tab1:
+    # Search + filter bar
+    search_col, filter_col, fav_col = st.columns([3, 2, 1])
+    with search_col:
+        search = st.text_input("🔍 Search charts", placeholder="e.g. violin, scatter, PCA...", label_visibility="collapsed")
+    with filter_col:
+        all_cats = ["All"] + sorted(set(v['category'] for v in CHART_REGISTRY.values()))
+        active_cat = st.selectbox("Category", all_cats, label_visibility="collapsed")
+    with fav_col:
+        show_favs = st.toggle("⭐ Only", help="Show favorited charts only")
+
+    # Get compatible charts for current domain
+    domain_map = {
+        "General": "General",
+        "Biology & Genomics": "Biology",
+        "Chemistry & Materials": "Chemistry/Materials",
+        "Medicine & Clinical": "Medicine",
+        "Physics & Engineering": "Physics",
+        "Social Science": "Social Science",
+    }
+    domain_key = domain_map.get(st.session_state.domain, "General")
+
+    # Filter chart list
+    def chart_matches(chart_id, chart):
+        if domain_key not in chart['domains'] and domain_key != "General":
+            return True  # still show, just deprioritize
+        if search and search.lower() not in chart['name'].lower() and search.lower() not in chart.get('description', '').lower():
+            return False
+        if active_cat != "All" and chart['category'] != active_cat:
+            return False
+        if show_favs and chart_id not in st.session_state.favorites:
+            return False
+        return True
+
+    filtered_charts = {k: v for k, v in CHART_REGISTRY.items() if chart_matches(k, v)}
+
+    if not filtered_charts:
+        st.info("No charts match your search. Try a different query or category.")
+        st.stop()
+
+    # Group by category
+    categories_present = sorted(set(v['category'] for v in filtered_charts.values()))
+
+    # ── Generate by Category (Lazy Loading) ──────────────────────────────────
+    def generate_chart_for_id(chart_id: str, chart_meta: dict) -> dict:
+        """Generate one chart and return result dict."""
+        df = st.session_state.df
+        mapping = st.session_state.col_mapping
+        x_col = mapping.get('x')
+        y_col = mapping.get('y')
+        color_col = mapping.get('color')
+        size_col = mapping.get('size')
+
+        num_cols = profile.numeric_cols
+        cat_cols = profile.categorical_cols
+        dt_cols = getattr(profile, 'datetime_cols', [])
+
+        fig_static, fig_plotly, code_str = None, None, ""
+        error = None
+
+        try:
+            cat = chart_meta['category']
+            cid = chart_id
+
+            import src.generators.distribution as dist_gen
+            import src.generators.comparison as comp_gen
+            import src.generators.correlation as corr_gen
+            import src.generators.timeseries as ts_gen
+            import src.generators.proportional as prop_gen
+            import src.generators.network as net_gen
+            import src.generators.scientific as sci_gen
+
+            # Smart column selection per chart
+            def first(*cols):
+                for c in cols:
+                    if c and c in df.columns:
+                        return c
+                return None
+
+            num0 = first(y_col, num_cols[0] if num_cols else None)
+            num1 = first(size_col, num_cols[1] if len(num_cols) > 1 else None)
+            cat0 = first(x_col, cat_cols[0] if cat_cols else None)
+            cat1 = first(color_col, cat_cols[1] if len(cat_cols) > 1 else None)
+
+            if cat == "Distribution":
+                if cid == "histogram":
+                    fig_static, fig_plotly, code_str = dist_gen.histogram(df, num0)
+                elif cid == "kde":
+                    fig_static, fig_plotly, code_str = dist_gen.kde_plot(df, num0)
+                elif cid == "violin" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.violin_plot(df, cat0, num0)
+                elif cid == "boxplot" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.box_plot(df, cat0, num0)
+                elif cid == "stripplot" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.strip_plot(df, cat0, num0)
+                elif cid == "ecdf" and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.ecdf_plot(df, num0)
+                elif cid == "qqplot" and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.qq_plot(df, num0)
+                elif cid == "beeswarm" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.beeswarm_plot(df, cat0, num0)
+                elif cid == "ridgeline" and num0 and cat0:
+                    fig_static, fig_plotly, code_str = dist_gen.ridgeline_plot(df, num0, cat0)
+                elif cid == "marginal_plot" and num0 and num1:
+                    fig_static, fig_plotly, code_str = dist_gen.marginal_plot(df, num0, num1)
+                elif cid == "raincloud" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = dist_gen.raincloud_plot(df, cat0, num0)
+
+            elif cat == "Comparison":
+                if cid == "bar" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.bar_chart(df, cat0, num0)
+                elif cid == "grouped_bar" and cat0 and num0 and cat1:
+                    fig_static, fig_plotly, code_str = comp_gen.grouped_bar(df, cat0, num0, cat1)
+                elif cid == "stacked_bar" and cat0 and num0 and cat1:
+                    fig_static, fig_plotly, code_str = comp_gen.stacked_bar(df, cat0, num0, cat1)
+                elif cid == "lollipop" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.lollipop_chart(df, cat0, num0)
+                elif cid == "dumbbell" and cat0 and num0 and num1:
+                    fig_static, fig_plotly, code_str = comp_gen.dumbbell_chart(df, cat0, num0, num1)
+                elif cid == "dotplot" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.dot_plot(df, cat0, num0)
+                elif cid == "slope" and cat0 and num0 and num1:
+                    fig_static, fig_plotly, code_str = comp_gen.slope_chart(df, cat0, num0, num1)
+                elif cid == "waterfall" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.waterfall_chart(df, cat0, num0)
+                elif cid == "errorbar" and cat0 and num0:
+                    err_col = num1 or num0
+                    fig_static, fig_plotly, code_str = comp_gen.error_bar_plot(df, cat0, num0, err_col)
+                elif cid == "diverging_bar" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.diverging_bar(df, cat0, num0)
+                elif cid == "population_pyramid" and num0 and num1 and cat0:
+                    fig_static, fig_plotly, code_str = comp_gen.population_pyramid(df, cat0, num0, num1)
+                elif cid == "percent_stacked_bar" and cat0 and num0 and cat1:
+                    fig_static, fig_plotly, code_str = comp_gen.percent_stacked_bar(df, cat0, num0, cat1)
+                elif cid == "radial_bar" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = comp_gen.radial_bar_chart(df, cat0, num0)
+                elif cid == "bullet_chart" and cat0 and num0 and num1:
+                    fig_static, fig_plotly, code_str = comp_gen.bullet_chart(df, cat0, num0, num1)
+                elif cid == "tornado_chart" and cat0 and num0 and num1:
+                    fig_static, fig_plotly, code_str = comp_gen.tornado_chart(df, cat0, num0, num1)
+
+            elif cat == "Correlation":
+                if cid == "scatter" and num0 and num1:
+                    fig_static, fig_plotly, code_str = corr_gen.scatter_plot(df, num0, num1, color_col=cat0)
+                elif cid == "bubble" and num0 and num1:
+                    size_c = num1
+                    fig_static, fig_plotly, code_str = corr_gen.bubble_chart(df, num0, num1, size_c, color_col=cat0)
+                elif cid == "hexbin" and num0 and num1:
+                    fig_static, fig_plotly, code_str = corr_gen.hexbin_plot(df, num0, num1)
+                elif cid == "corr_heatmap" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = corr_gen.corr_heatmap(df)
+                elif cid == "pairplot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = corr_gen.pairplot(df, num_cols[:4])
+                elif cid == "parallel_coords" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = corr_gen.parallel_coords(df, num_cols[:5], color_col=cat0)
+                elif cid == "contour_2d" and num0 and num1:
+                    fig_static, fig_plotly, code_str = corr_gen.contour_2d(df, num0, num1)
+                elif cid == "connected_scatter" and num0 and num1:
+                    fig_static, fig_plotly, code_str = corr_gen.connected_scatter(df, num0, num1, num0)
+                elif cid == "marginal_scatter" and num0 and num1:
+                    fig_static, fig_plotly, code_str = corr_gen.marginal_scatter(df, num0, num1, color_col=cat0)
+
+            elif cat == "Time Series":
+                x_ts = first(x_col, dt_cols[0] if dt_cols else cat0)
+                if x_ts and num0:
+                    if cid == "line":
+                        fig_static, fig_plotly, code_str = ts_gen.line_chart(df, x_ts, [num0])
+                    elif cid == "area":
+                        fig_static, fig_plotly, code_str = ts_gen.area_chart(df, x_ts, num0)
+                    elif cid == "stacked_area" and len(num_cols) >= 2:
+                        fig_static, fig_plotly, code_str = ts_gen.stacked_area(df, x_ts, num_cols[:3])
+                    elif cid == "step_line":
+                        fig_static, fig_plotly, code_str = ts_gen.step_line(df, x_ts, num0)
+                    elif cid == "streamgraph" and len(num_cols) >= 2:
+                        fig_static, fig_plotly, code_str = ts_gen.streamgraph(df, x_ts, num_cols[:4])
+                    elif cid == "bump_chart" and cat0:
+                        fig_static, fig_plotly, code_str = ts_gen.bump_chart(df, x_ts, cat0, num0)
+                    elif cid == "calendar_heatmap":
+                        fig_static, fig_plotly, code_str = ts_gen.calendar_heatmap(df, x_ts, num0)
+                    elif cid == "candlestick" and len(num_cols) >= 4:
+                        fig_static, fig_plotly, code_str = ts_gen.candlestick_chart(df, x_ts, num_cols[0], num_cols[1], num_cols[2], num_cols[3])
+                    elif cid == "spiral_chart":
+                        fig_static, fig_plotly, code_str = ts_gen.spiral_chart(df, x_ts, num0)
+
+            elif cat == "Proportional":
+                if cid == "pie" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.pie_chart(df, cat0, num0)
+                elif cid == "donut" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.donut_chart(df, cat0, num0)
+                elif cid == "treemap" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.treemap(df, cat0, num0)
+                elif cid == "sunburst" and cat0 and cat1 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.sunburst(df, cat0, cat1, num0)
+                elif cid == "nightingale" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.nightingale_rose(df, cat0, num0)
+                elif cid == "waffle" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.waffle_chart(df, cat0, num0)
+                elif cid == "marimekko" and cat0 and cat1 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.marimekko_chart(df, cat0, cat1, num0)
+                elif cid == "circle_packing" and cat0 and num0:
+                    fig_static, fig_plotly, code_str = prop_gen.circle_packing(df, cat0, num0)
+
+            elif cat == "Network":
+                # For network charts, need source/target cols
+                src = cat0
+                tgt = cat1 or (cat_cols[2] if len(cat_cols) > 2 else cat0)
+                if src and tgt:
+                    if cid == "sankey":
+                        fig_static, fig_plotly, code_str = net_gen.sankey_diagram(df, src, tgt, num0 or src)
+                    elif cid == "network_graph":
+                        fig_static, fig_plotly, code_str = net_gen.network_graph(df, src, tgt)
+                    elif cid == "chord_diagram":
+                        fig_static, fig_plotly, code_str = net_gen.chord_diagram(df, src, tgt, num0 or src)
+                    elif cid == "arc_diagram":
+                        fig_static, fig_plotly, code_str = net_gen.arc_diagram(df, src, tgt)
+                    elif cid == "alluvial":
+                        stage_cols = cat_cols[:3] if len(cat_cols) >= 2 else [cat0, cat0]
+                        fig_static, fig_plotly, code_str = net_gen.alluvial_diagram(df, stage_cols)
+                if cid == "dendrogram" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = net_gen.dendrogram_plot(df, num_cols[:6])
+
+            elif cat == "Scientific":
+                if cid == "volcano_plot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.volcano_plot(df, num_cols[0], num_cols[1])
+                elif cid == "pca_plot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.pca_plot(df, num_cols[:6], color_col=cat0)
+                elif cid == "umap_plot" and len(num_cols) >= 3:
+                    fig_static, fig_plotly, code_str = sci_gen.umap_plot(df, num_cols[:6], color_col=cat0)
+                elif cid == "tsne_plot" and len(num_cols) >= 3:
+                    fig_static, fig_plotly, code_str = sci_gen.tsne_plot(df, num_cols[:6], color_col=cat0)
+                elif cid == "roc_curve" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.roc_curve_plot(df, num_cols[0], num_cols[1])
+                elif cid == "radar" and cat0 and len(num_cols) >= 3:
+                    fig_static, fig_plotly, code_str = sci_gen.radar_chart(df, cat0, num_cols[:5])
+                elif cid == "parity_plot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.parity_plot(df, num_cols[0], num_cols[1])
+                elif cid == "bland_altman" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.bland_altman_plot(df, num_cols[0], num_cols[1])
+                elif cid == "kaplan_meier" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.kaplan_meier_plot(df, num_cols[0], num_cols[1], group_col=cat0)
+                elif cid == "manhattan_plot" and cat0 and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.manhattan_plot(df, cat0, num_cols[0], num_cols[1])
+                elif cid == "forest_plot" and cat0 and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.forest_plot(df, cat0, num_cols[0], num_cols[0], num_cols[1])
+                elif cid == "funnel_plot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.funnel_plot(df, num_cols[0], num_cols[1])
+                elif cid == "calibration_curve" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.calibration_curve(df, num_cols[0], num_cols[1])
+                elif cid == "residual_plot" and len(num_cols) >= 2:
+                    fig_static, fig_plotly, code_str = sci_gen.residual_plot(df, num_cols[0], num_cols[1])
+                elif cid == "upset_plot" and len(cat_cols) >= 3:
+                    fig_static, fig_plotly, code_str = sci_gen.upset_plot(df, cat_cols[:5])
+
+            elif cat == "Text":
+                try:
+                    import src.generators.text_viz as text_gen
+                    text_col_candidate = next((c for c in df.columns if df[c].dtype == object and df[c].str.len().mean() > 5), cat0)
+                    if cid == "wordcloud" and text_col_candidate:
+                        fig_static, fig_plotly, code_str = text_gen.wordcloud_plot(df, text_col_candidate)
+                    elif cid == "venn":
+                        # Build 2-3 sets from boolean/categorical cols
+                        sets = {}
+                        for c in cat_cols[:3]:
+                            vals = df[c].dropna().unique()
+                            if len(vals) == 2:
+                                sets[c] = set(df[df[c] == vals[0]].index)
+                        if len(sets) >= 2:
+                            fig_static, fig_plotly, code_str = text_gen.venn_diagram(sets)
+                except Exception:
+                    pass
+
+            elif cat == "Geographic":
+                try:
+                    import src.generators.geo_viz as geo_gen
+                    if cid == "choropleth" and cat0 and num0:
+                        fig_static, fig_plotly, code_str = geo_gen.choropleth_map(df, cat0, num0)
+                    elif cid == "bubble_map" and len(num_cols) >= 3:
+                        fig_static, fig_plotly, code_str = geo_gen.bubble_map(df, num_cols[0], num_cols[1], num_cols[2])
+                except Exception:
+                    pass
+
+            elif cat == "3D":
+                try:
+                    import src.generators.threed_viz as viz3d
+                    if cid == "scatter_3d" and len(num_cols) >= 3:
+                        fig_static, fig_plotly, code_str = viz3d.scatter_3d(df, num_cols[0], num_cols[1], num_cols[2], color_col=cat0)
+                    elif cid == "surface_3d" and len(num_cols) >= 3:
+                        fig_static, fig_plotly, code_str = viz3d.surface_3d(df, num_cols[0], num_cols[1], num_cols[2])
+                    elif cid == "bar_3d" and len(num_cols) >= 1 and len(cat_cols) >= 2:
+                        fig_static, fig_plotly, code_str = viz3d.bar_3d(df, cat0, cat1, num0)
+                except Exception:
+                    pass
+
+        except Exception as e:
+            error = traceback.format_exc()
+
+        return {
+            'name': chart_meta['name'],
+            'category': chart_meta['category'],
+            'description': chart_meta.get('description', ''),
+            'when_to_use': chart_meta.get('when_to_use', ''),
+            'fig_static': fig_static,
+            'fig_plotly': fig_plotly,
+            'code_str': code_str,
+            'error': error,
+        }
+
+    # ── Chart Grid UI ─────────────────────────────────────────────────────────
+    # Show charts by category with lazy "Generate" button per category
+    for category in categories_present:
+        cat_charts = {k: v for k, v in filtered_charts.items() if v['category'] == category}
+        if not cat_charts:
+            continue
+
+        color = CATEGORY_COLORS.get(category, "#667eea")
+        generated_count = sum(
+            1 for cid in cat_charts
+            if cid in st.session_state.generated_charts
+            and st.session_state.generated_charts[cid].get('fig_static') is not None
+        )
+
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px 0">'
+            f'<span style="background:{color};color:white;padding:3px 12px;border-radius:12px;font-weight:600;font-size:13px">{category}</span>'
+            f'<span style="color:#888;font-size:13px">{len(cat_charts)} charts'
+            f'{f" · {generated_count} generated" if generated_count else ""}</span>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+        # Check if already generated
+        cat_generated = all(cid in st.session_state.generated_charts for cid in cat_charts)
+
+        if not cat_generated:
+            if st.button(f"⚡ Generate {category} charts ({len(cat_charts)})", key=f"gen_{category}"):
+                prog_bar = st.progress(0, text=f"Generating {category}...")
+                chart_ids = list(cat_charts.keys())
+                for i, chart_id in enumerate(chart_ids):
+                    if chart_id not in st.session_state.generated_charts:
+                        result = generate_chart_for_id(chart_id, CHART_REGISTRY[chart_id])
+                        st.session_state.generated_charts[chart_id] = result
+                        # Store for figure panel
+                        if result.get('fig_static'):
+                            if 'generated_charts_panel' not in st.session_state:
+                                st.session_state['generated_charts_panel'] = {}
+                            st.session_state['generated_charts_panel'][result['name']] = {
+                                'fig_static': result['fig_static'],
+                                'fig_plotly': result['fig_plotly']
+                            }
+                    prog_bar.progress(
+                        (i + 1) / len(chart_ids),
+                        text=f"Generated {i+1}/{len(chart_ids)}: {CHART_REGISTRY[chart_id]['name']}"
+                    )
+                prog_bar.empty()
+                st.rerun()
+        else:
+            # Show chart grid (3 columns)
+            chart_items = list(cat_charts.items())
+            for row_start in range(0, len(chart_items), 3):
+                row_items = chart_items[row_start:row_start+3]
+                cols = st.columns(3)
+                for col_idx, (chart_id, chart_meta) in enumerate(row_items):
+                    with cols[col_idx]:
+                        result = st.session_state.generated_charts.get(chart_id, {})
+                        is_fav = chart_id in st.session_state.favorites
+
+                        # Chart name + favorite button
+                        name_col, fav_btn_col = st.columns([5, 1])
+                        with name_col:
+                            st.markdown(f"<div class='chart-name'>{chart_meta['name']}</div>", unsafe_allow_html=True)
+                        with fav_btn_col:
+                            if st.button("⭐" if is_fav else "☆", key=f"fav_{chart_id}", help="Favorite"):
+                                if is_fav:
+                                    st.session_state.favorites.discard(chart_id)
+                                else:
+                                    st.session_state.favorites.add(chart_id)
+                                st.rerun()
+
+                        # Show chart thumbnail
+                        if result.get('fig_static'):
+                            try:
+                                buf = io.BytesIO()
+                                result['fig_static'].savefig(buf, format='png', dpi=80, bbox_inches='tight')
+                                buf.seek(0)
+                                st.image(buf, use_container_width=True)
+                            except Exception:
+                                st.warning("Preview unavailable")
+
+                            # Action buttons
+                            mode = st.session_state.chart_mode
+                            b1, b2, b3 = st.columns(3)
+                            with b1:
+                                # Download PNG
+                                try:
+                                    dl_buf = io.BytesIO()
+                                    result['fig_static'].savefig(dl_buf, format='png', dpi=300, bbox_inches='tight')
+                                    dl_buf.seek(0)
+                                    st.download_button(
+                                        "⬇️ PNG", data=dl_buf,
+                                        file_name=f"{chart_id}.png", mime="image/png",
+                                        key=f"dl_{chart_id}", use_container_width=True
+                                    )
+                                except Exception:
+                                    pass
+                            with b2:
+                                # Show code
+                                if st.button("💻 Code", key=f"code_{chart_id}", use_container_width=True):
+                                    st.session_state[f'show_code_{chart_id}'] = not st.session_state.get(f'show_code_{chart_id}', False)
+                                    st.rerun()
+                            with b3:
+                                # Add to panel
+                                in_panel = chart_meta['name'] in st.session_state.get('panel_selection', set())
+                                if st.button(
+                                    "🖼️ +Panel" if not in_panel else "🖼️ ✓",
+                                    key=f"panel_{chart_id}", use_container_width=True
+                                ):
+                                    if 'panel_selection' not in st.session_state:
+                                        st.session_state['panel_selection'] = set()
+                                    if in_panel:
+                                        st.session_state['panel_selection'].discard(chart_meta['name'])
+                                    else:
+                                        st.session_state['panel_selection'].add(chart_meta['name'])
+                                    st.rerun()
+
+                            # Interactive chart
+                            if mode in ["Interactive", "Both"] and result.get('fig_plotly'):
+                                with st.expander("📈 Interactive version"):
+                                    st.plotly_chart(result['fig_plotly'], use_container_width=True, key=f"plotly_{chart_id}")
+
+                            # Code block
+                            if st.session_state.get(f'show_code_{chart_id}') and result.get('code_str'):
+                                with st.expander("💻 Python Code", expanded=True):
+                                    st.code(result['code_str'], language='python')
+
+                            # When to use
+                            st.caption(f"💡 {chart_meta.get('when_to_use', '')}")
+
+                        elif result.get('error'):
+                            st.markdown(
+                                '<div style="background:#fff3cd;border-radius:6px;padding:8px;font-size:12px;color:#856404">⚠️ Not applicable for this data</div>',
+                                unsafe_allow_html=True
+                            )
+                            with st.expander("Why?"):
+                                st.caption(result['error'][:300])
+                        else:
+                            st.markdown(
+                                '<div style="background:#f8f9fa;border-radius:6px;padding:30px;text-align:center;color:#aaa">Not generated yet</div>',
+                                unsafe_allow_html=True
+                            )
+                        st.markdown("")
+
+    # Generate All button at bottom
+    st.divider()
+    not_generated = [cid for cid in filtered_charts if cid not in st.session_state.generated_charts]
+    if not_generated:
+        if st.button(f"⚡ Generate ALL remaining charts ({len(not_generated)})", type="primary", use_container_width=True):
+            prog = st.progress(0, text="Generating all charts...")
+            for i, chart_id in enumerate(not_generated):
+                result = generate_chart_for_id(chart_id, CHART_REGISTRY[chart_id])
+                st.session_state.generated_charts[chart_id] = result
+                if result.get('fig_static'):
+                    if 'generated_charts_panel' not in st.session_state:
+                        st.session_state['generated_charts_panel'] = {}
+                    st.session_state['generated_charts_panel'][result['name']] = {
+                        'fig_static': result['fig_static'],
+                        'fig_plotly': result['fig_plotly']
+                    }
+                prog.progress(
+                    (i + 1) / len(not_generated),
+                    text=f"{i+1}/{len(not_generated)}: {CHART_REGISTRY[chart_id]['name']}"
+                )
+            prog.empty()
+            st.rerun()
+    else:
+        st.success(f"✅ All {len(filtered_charts)} charts generated!")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2: CHART GUIDE (Decision Tree)
+# ══════════════════════════════════════════════════════════════════════════════
 with tab2:
     st.subheader("🌳 Chart Selection Guide")
-    st.caption("Answer a few questions to find the right chart for your data.")
+    st.caption("Answer a few questions to find the best chart for your data and goal.")
 
     from src.decision_tree import DECISION_TREE, get_recommendations
 
     if "dt_path" not in st.session_state:
         st.session_state.dt_path = []
 
-    # Show current question
     path = st.session_state.dt_path
+
+    # Traverse tree
     node = DECISION_TREE["start"]
     for choice in path:
         options = node.get("options", {})
-        node = options.get(choice)
-        if node is None:
+        next_node = options.get(choice)
+        if next_node is None:
             break
+        if isinstance(next_node, str):
+            next_node = DECISION_TREE.get(next_node, {})
+        node = next_node
         if isinstance(node, dict) and "recommend" in node:
             break
 
+    # Show breadcrumb
+    if path:
+        breadcrumb = " → ".join([p[:30] for p in path])
+        st.caption(f"📍 {breadcrumb}")
+
     if isinstance(node, dict) and "recommend" in node:
-        # Show recommendation
         st.success(f"**Recommended charts:** {', '.join(node['recommend'])}")
         st.info(f"💡 {node['reason']}")
-        # Show the recommended charts from registry
-        from src.chart_registry import CHART_REGISTRY as _CR
+        st.markdown("---")
+        st.markdown("**These charts work best for your use case:**")
         for chart_id in node["recommend"]:
-            if chart_id in _CR:
-                chart = _CR[chart_id]
-                st.markdown(f"**{chart['name']}** — {chart['description']}")
-        if st.button("🔄 Start Over"):
-            st.session_state.dt_path = []
-            st.rerun()
-    else:
-        # Show question
-        if node and "question" in node:
-            st.markdown(f"**{node['question']}**")
-            options = list(node.get("options", {}).keys())
-            choice = st.radio("Select:", options, key=f"dt_q_{len(path)}")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("→ Next"):
-                    st.session_state.dt_path.append(choice)
+            if chart_id in CHART_REGISTRY:
+                chart = CHART_REGISTRY[chart_id]
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown(f"**{chart['name']}**")
+                    st.caption(chart['description'])
+                with col2:
+                    if chart_id in st.session_state.generated_charts and st.session_state.generated_charts[chart_id].get('fig_static'):
+                        try:
+                            buf = io.BytesIO()
+                            st.session_state.generated_charts[chart_id]['fig_static'].savefig(buf, format='png', dpi=60, bbox_inches='tight')
+                            buf.seek(0)
+                            st.image(buf, width=120)
+                        except Exception:
+                            pass
+                st.markdown("")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Start Over", use_container_width=True):
+                st.session_state.dt_path = []
+                st.rerun()
+        with col2:
+            if st.button("← Back one step", use_container_width=True):
+                if st.session_state.dt_path:
+                    st.session_state.dt_path.pop()
                     st.rerun()
-            with col2:
-                if path and st.button("← Back"):
+    else:
+        if node and "question" in node:
+            st.markdown(f"### {node['question']}")
+            st.markdown("")
+            options = list(node.get("options", {}).keys())
+            for opt in options:
+                if st.button(opt, key=f"dt_{opt[:30]}_{len(path)}", use_container_width=True):
+                    st.session_state.dt_path.append(opt)
+                    st.rerun()
+            if path:
+                st.markdown("")
+                if st.button("← Back", use_container_width=True):
                     st.session_state.dt_path.pop()
                     st.rerun()
 
-with tab1:
-    # ── Landing page ──────────────────────────────────────────────────────
-    if st.session_state.df is None:
-        st.markdown("---")
-        col_l, col_r = st.columns([3, 2])
-        with col_l:
-            st.markdown("""
-### ✨ What SciVizKit Can Do
-
-- 📊 **50+ chart types** across 7 categories
-- 🔍 **Auto-detects** column types (numeric, categorical, datetime, binary)
-- 🎯 **Domain-aware** chart recommendations (Biology, Chemistry, Medicine, Physics…)
-- 🖼️ **Static** (matplotlib/seaborn) + **Interactive** (Plotly) charts
-- 💻 **Copy-paste code** for every chart — export to your own notebook
-- ⬇️ **Download PNG** for any static chart
-
-### 🗂️ Chart Categories
-
-| Category | Charts |
-|----------|--------|
-| Distribution | Histogram, KDE, Violin, Box, Strip, Beeswarm, ECDF, Q-Q |
-| Comparison | Bar, Grouped Bar, Stacked Bar, Lollipop, Dumbbell, Dot, Slope, Waterfall, Error Bar |
-| Correlation | Scatter, Bubble, Hexbin, Corr Heatmap, Pair Plot, Parallel Coords |
-| Time Series | Line, Area, Stacked Area, Step Line |
-| Proportional | Pie, Donut, Treemap, Sunburst, Nightingale Rose |
-| Network | Sankey, Network Graph, Dendrogram |
-| Scientific | Volcano, PCA, ROC Curve, Radar, Parity, Bland-Altman, Kaplan-Meier |
-""")
-        with col_r:
-            st.info("👈 **Upload your CSV/Excel** in the sidebar, or load an example dataset to get started.")
-            st.markdown("#### 🚀 Quick Start")
-            st.code("""
-# 1. Upload your data (sidebar)
-# 2. Select domain
-# 3. Click 'Generate All Visualizations'
-# 4. Explore 50+ charts!
-            """, language="bash")
-
-        st.stop()
-
-    # ── Data loaded — show overview ───────────────────────────────────────
-    df = st.session_state.df
-    analyzer = st.session_state.analyzer
-
-    st.success(f"✅ Loaded **{st.session_state.filename}** — {df.shape[0]:,} rows × {df.shape[1]} columns")
-
-    # Data preview
-    with st.expander("📋 Data Preview", expanded=False):
-        st.dataframe(df.head(100), use_container_width=True)
-
-    # Column type summary
-    with st.expander("🔍 Column Type Analysis", expanded=True):
-        p = analyzer.profile
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🔢 Numeric", len(p["numeric_cols"]))
-        c2.metric("🏷️ Categorical", len(p["categorical_cols"]))
-        c3.metric("📅 Datetime", len(p["datetime_cols"]))
-        c4.metric("⚡ Binary", len(p["binary_cols"]))
-
-        if p["numeric_cols"]:
-            st.markdown(f"**Numeric:** `{'` · `'.join(p['numeric_cols'])}`")
-        if p["categorical_cols"]:
-            st.markdown(f"**Categorical:** `{'` · `'.join(p['categorical_cols'])}`")
-        if p["datetime_cols"]:
-            st.markdown(f"**Datetime:** `{'` · `'.join(p['datetime_cols'])}`")
-
-    # Compatible charts
-    compat = analyzer.get_compatible_charts(domain)
-    st.markdown(f"**{len(compat)} compatible charts** found for domain: **{domain}**")
-
-    # ── Generate button ───────────────────────────────────────────────────
-    if st.button("🚀 Generate All Visualizations", type="primary", use_container_width=True):
-        gen_modules = _load_generators()
-        with st.spinner("Building your visualizations…"):
-            results = generate_charts(df, analyzer, domain, compat, gen_modules)
-        st.session_state.chart_results = results
-        st.session_state.charts_generated = True
-        st.rerun()
-
-    # ── Show charts grouped by category ──────────────────────────────────
-    if st.session_state.charts_generated and st.session_state.chart_results:
-        results = st.session_state.chart_results
-
-        # Group by category
-        from collections import defaultdict
-        by_cat = defaultdict(list)
-        for cid, result in results.items():
-            meta = CHART_REGISTRY.get(cid, {})
-            cat = meta.get("category", "Other")
-            by_cat[cat].append((cid, meta, result))
-
-        cat_order = ["Distribution", "Comparison", "Correlation",
-                     "Time Series", "Proportional", "Network", "Scientific"]
-        cats_present = [c for c in cat_order if c in by_cat] +                        [c for c in by_cat if c not in cat_order]
-
-        for cat in cats_present:
-            items = by_cat[cat]
-            st.markdown(f'<div class="cat-header">📊 {cat}</div>', unsafe_allow_html=True)
-
-            # 3-column grid
-            cols = st.columns(3)
-            for idx, (cid, meta, (fig_s, fig_p, code)) in enumerate(items):
-                col = cols[idx % 3]
-                with col:
-                    with st.expander(f"**{meta.get('name', cid)}**", expanded=False):
-                        has_content = fig_s is not None or fig_p is not None
-
-                        if not has_content:
-                            st.warning(f"⚠️ Chart could not be generated.\n\n`{code[:200]}`")
-                        else:
-                            # Show chart based on mode
-                            if chart_mode in ("Interactive", "Both") and fig_p is not None:
-                                st.plotly_chart(fig_p, use_container_width=True, key=f"plotly_{cid}")
-                            if chart_mode in ("Static", "Both") and fig_s is not None:
-                                st.pyplot(fig_s, use_container_width=True)
-                            elif chart_mode == "Interactive" and fig_p is None and fig_s is not None:
-                                # fallback to static if no interactive
-                                st.pyplot(fig_s, use_container_width=True)
-
-                            # When to use
-                            st.info(f"💡 **When to use:** {meta.get('when_to_use', '')}")
-
-                            # Download PNG
-                            if fig_s is not None:
-                                try:
-                                    png_bytes = fig_to_png(fig_s)
-                                    st.download_button(
-                                        label="⬇️ Download PNG",
-                                        data=png_bytes,
-                                        file_name=f"{cid}.png",
-                                        mime="image/png",
-                                        key=f"dl_{cid}",
-                                        use_container_width=True,
-                                    )
-                                except Exception:
-                                    pass
-
-                            # Code snippet
-                            if code and not code.startswith("# Error"):
-                                with st.expander("📋 Copy Code", expanded=False):
-                                    st.code(code, language="python")
-
-        st.markdown("---")
-        st.markdown(
-            f"✅ Generated **{len([r for r in results.values() if r[0] is not None or r[1] is not None])}** "
-            f"charts out of **{len(results)}** compatible types."
-        )
-
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3: FIGURE PANEL
+# ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.subheader("🖼️ Figure Panel Builder")
     st.caption("Combine multiple charts into a single publication-ready figure.")
 
-    # Check if charts have been generated
-    if not st.session_state.get('generated_charts'):
-        st.info("👆 First go to **Visualize Data** tab, upload data, and generate charts.")
+    from src.figure_panel import combine_figures, fig_to_bytes
+
+    # Use generated_charts_panel or generated_charts
+    panel_source = st.session_state.get('generated_charts_panel') or {}
+    if not panel_source:
+        # Fallback: build from generated_charts
+        for cid, res in st.session_state.get('generated_charts', {}).items():
+            if res.get('fig_static'):
+                panel_source[res['name']] = {
+                    'fig_static': res['fig_static'],
+                    'fig_plotly': res.get('fig_plotly')
+                }
+
+    if not panel_source:
+        st.info("👆 Go to **Visualize Data** tab and generate some charts first, then come back here.")
     else:
-        generated = st.session_state.get('generated_charts', {})
-        available = list(generated.keys())
+        available = list(panel_source.keys())
+        pre_selected = list(
+            st.session_state.get('panel_selection', set()) & set(available)
+        ) or available[:min(4, len(available))]
 
-        st.markdown("**Step 1: Select charts to include**")
-        selected = st.multiselect(
-            "Choose charts for the panel:",
-            options=available,
-            default=available[:min(4, len(available))]
-        )
+        selected = st.multiselect("Select charts for the panel:", options=available, default=pre_selected)
 
-        st.markdown("**Step 2: Layout settings**")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            ncols = st.slider("Columns", 1, 4, 2)
+            ncols = st.slider("Columns", 1, 4, min(2, len(selected)) if selected else 2)
         with col2:
             panel_w = st.slider("Panel width (in)", 4, 10, 6)
         with col3:
             panel_h = st.slider("Panel height (in)", 3, 8, 4)
+        with col4:
+            export_dpi = st.select_slider("DPI", [72, 150, 300, 600], value=300)
 
         add_labels = st.checkbox("Add A, B, C... panel labels", value=True)
-        export_dpi = st.select_slider("Export DPI", options=[72, 150, 300, 600], value=300)
 
-        if selected and st.button("🖼️ Build Figure Panel", type="primary"):
-            from src.figure_panel import combine_figures, fig_to_bytes
-
-            figs_to_combine = []
-            for chart_name in selected:
-                fig_static = generated[chart_name].get('fig_static')
-                if fig_static is not None:
-                    figs_to_combine.append((chart_name, fig_static))
-
-            if figs_to_combine:
+        if selected and st.button("🖼️ Build Figure Panel", type="primary", use_container_width=True):
+            figs = [
+                (name, panel_source[name]['fig_static'])
+                for name in selected
+                if panel_source[name].get('fig_static')
+            ]
+            if figs:
                 with st.spinner("Building combined figure..."):
-                    combined_fig = combine_figures(
-                        figs_to_combine,
-                        ncols=ncols,
-                        panel_labels=add_labels,
-                        figsize_per_panel=(panel_w, panel_h),
-                        dpi=export_dpi
+                    combined = combine_figures(
+                        figs, ncols=ncols, panel_labels=add_labels,
+                        figsize_per_panel=(panel_w, panel_h), dpi=export_dpi
                     )
-
-                if combined_fig:
-                    st.pyplot(combined_fig)
-
-                    # Download buttons
-                    png_bytes = fig_to_bytes(combined_fig, dpi=export_dpi, fmt='png')
-                    st.download_button(
-                        "⬇️ Download PNG (Publication Quality)",
-                        data=png_bytes,
-                        file_name="figure_panel.png",
-                        mime="image/png"
-                    )
-
-                    svg_bytes = fig_to_bytes(combined_fig, dpi=export_dpi, fmt='svg')
-                    st.download_button(
-                        "⬇️ Download SVG (Vector)",
-                        data=svg_bytes,
-                        file_name="figure_panel.svg",
-                        mime="image/svg+xml"
-                    )
-            else:
-                st.warning("No static figures available for selected charts. Generate charts first.")
+                if combined:
+                    st.pyplot(combined)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.download_button(
+                            "⬇️ Download PNG (300 DPI)",
+                            data=fig_to_bytes(combined, dpi=export_dpi, fmt='png'),
+                            file_name="figure_panel.png", mime="image/png",
+                            use_container_width=True
+                        )
+                    with c2:
+                        st.download_button(
+                            "⬇️ Download SVG (Vector)",
+                            data=fig_to_bytes(combined, dpi=export_dpi, fmt='svg'),
+                            file_name="figure_panel.svg", mime="image/svg+xml",
+                            use_container_width=True
+                        )
