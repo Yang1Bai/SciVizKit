@@ -92,6 +92,7 @@ def init_state():
         'chart_mode': 'Both',
         'palette': 'Default',
         'domain': 'General',
+        'max_rows': 3000,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -155,6 +156,19 @@ with st.sidebar:
     ])
     st.markdown(swatch_html, unsafe_allow_html=True)
     st.caption(PALETTES[palette]["description"])
+
+    st.divider()
+    max_rows = st.slider(
+        "⚡ 预览采样行数",
+        min_value=500, max_value=10000,
+        value=st.session_state.get('max_rows', 3000),
+        step=500,
+        help="数据量大时自动降采样加速生成。下载图表仍使用全量数据。"
+    )
+    if max_rows != st.session_state.get('max_rows'):
+        st.session_state.max_rows = max_rows
+        st.session_state.generated_charts = {}
+        st.session_state.generation_progress = {}
 
     st.divider()
 
@@ -348,18 +362,33 @@ with tab1:
     categories_present = sorted(set(v['category'] for v in filtered_charts.values()))
 
     # ── Generate by Category (Lazy Loading) ──────────────────────────────────
+    # Charts that are too slow with large data — hard cap at 1000 rows
+    HEAVY_CHARTS = {'umap_plot', 'tsne_plot', 'pairplot', 'parallel_coords', 'andrews_curves'}
+
     def generate_chart_for_id(chart_id: str, chart_meta: dict) -> dict:
         """Generate one chart and return result dict."""
         df = st.session_state.df
+
+        # ── Sampling for performance ──────────────────────────────────────────
+        max_rows = st.session_state.get('max_rows', 3000)
+        if len(df) > max_rows:
+            df = df.sample(n=max_rows, random_state=42).reset_index(drop=True)
+        # Extra limit for expensive algorithms
+        if chart_id in HEAVY_CHARTS and len(df) > 1000:
+            df = df.sample(n=1000, random_state=42).reset_index(drop=True)
+        # ─────────────────────────────────────────────────────────────────────
+
         mapping = st.session_state.col_mapping
         x_col = mapping.get('x')
         y_col = mapping.get('y')
         color_col = mapping.get('color')
         size_col = mapping.get('size')
 
-        num_cols = profile.numeric_cols
-        cat_cols = profile.categorical_cols
-        dt_cols = getattr(profile, 'datetime_cols', [])
+        # Rebuild profile on sampled df
+        _profile = DataAnalyzer(df)
+        num_cols = _profile.numeric_cols
+        cat_cols = _profile.categorical_cols
+        dt_cols = getattr(_profile, 'datetime_cols', [])
 
         fig_static, fig_plotly, code_str = None, None, ""
         error = None
