@@ -10,6 +10,27 @@
 
 ---
 
+## 🖼️ Gallery | 效果展示
+
+<p align="center">
+  <img src="assets/gallery/01_violin_distribution.png" width="45%">
+  <img src="assets/gallery/02_heatmap_correlation.png" width="45%">
+</p>
+<p align="center">
+  <img src="assets/gallery/03_volcano_plot.png" width="45%">
+  <img src="assets/gallery/04_radar_chart.png" width="45%">
+</p>
+<p align="center">
+  <img src="assets/gallery/05_survival_curve.png" width="45%">
+  <img src="assets/gallery/06_network_graph.png" width="45%">
+</p>
+<p align="center">
+  <img src="assets/gallery/07_3d_scatter.png" width="45%">
+  <img src="assets/gallery/08_publication_panel.png" width="45%">
+</p>
+
+---
+
 ## 🚀 Live Demo | 在线体验
 
 **👉 [https://scivizkit-hvbzujsahst6uec2pupvrx.streamlit.app/](https://scivizkit-hvbzujsahst6uec2pupvrx.streamlit.app/)**
