@@ -517,3 +517,108 @@ def error_bar_plot(df: pd.DataFrame, x_col: str, y_col: str, err_col: str):
         return fig_s, fig_p, code
     except Exception as e:
         return None, None, f"# Error: {e}"
+
+
+# ── Bar Chart with Significance Brackets (NGplot-inspired) ────────────
+# Popular in NGplot: 柱状图-多变量-误差线-星号连接
+# Shows grouped bars with error bars and pairwise significance brackets.
+
+try:
+    from scipy.stats import mannwhitneyu as _mwu
+    _HAS_SCIPY = True
+except ImportError:
+    _HAS_SCIPY = False
+
+
+def _sig_label(p: float) -> str:
+    if p < 0.001:
+        return "***"
+    elif p < 0.01:
+        return "**"
+    elif p < 0.05:
+        return "*"
+    return "ns"
+
+
+def bar_sig(df: pd.DataFrame, x_col: str, y_col: str):
+    """
+    Bar + Significance Chart (NGplot-style 星号连接柱状图):
+    Bar chart with error bars and pairwise significance brackets.
+    """
+    try:
+        groups = df[x_col].dropna().unique()
+        means = df.groupby(x_col)[y_col].mean()
+        stds = df.groupby(x_col)[y_col].std()
+
+        palette = plt.cm.Set2(np.linspace(0, 1, len(groups)))
+        fig_s, ax = plt.subplots(figsize=(max(6, len(groups) * 1.4), 6))
+
+        bars = ax.bar(range(len(groups)),
+                      [means[g] for g in groups],
+                      yerr=[stds[g] for g in groups],
+                      color=palette,
+                      capsize=5,
+                      error_kw=dict(ecolor="black", lw=1.5),
+                      width=0.6,
+                      zorder=2)
+
+        ax.set_xticks(range(len(groups)))
+        ax.set_xticklabels([str(g) for g in groups], rotation=30, ha="right")
+        ax.set_ylabel(y_col)
+        ax.set_title(f"Bar + Significance: {y_col} by {x_col}")
+        ax.spines[["top", "right"]].set_visible(False)
+
+        # Draw significance brackets between consecutive groups
+        if _HAS_SCIPY and len(groups) > 1:
+            y_max = max(means[g] + stds[g] for g in groups if not np.isnan(stds[g]))
+            bracket_base = y_max * 1.08
+            bracket_step = y_max * 0.10
+
+            for idx in range(len(groups) - 1):
+                g1, g2 = groups[idx], groups[idx + 1]
+                d1 = df[df[x_col] == g1][y_col].dropna()
+                d2 = df[df[x_col] == g2][y_col].dropna()
+                if len(d1) < 2 or len(d2) < 2:
+                    continue
+                try:
+                    _, p = _mwu(d1, d2, alternative="two-sided")
+                except Exception:
+                    continue
+                label = _sig_label(p)
+                y_br = bracket_base + idx * bracket_step
+                x1, x2 = idx, idx + 1
+                ax.plot([x1, x1, x2, x2], [y_br - bracket_step * 0.3, y_br, y_br, y_br - bracket_step * 0.3],
+                        lw=1.2, color="black")
+                ax.text((x1 + x2) / 2, y_br + bracket_step * 0.05, label,
+                        ha="center", va="bottom", fontsize=11,
+                        color="red" if label != "ns" else "grey")
+
+        fig_s.tight_layout()
+
+        code = f"""\
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import mannwhitneyu
+
+groups = df['{x_col}'].dropna().unique()
+means = df.groupby('{x_col}')['{y_col}'].mean()
+stds  = df.groupby('{x_col}')['{y_col}'].std()
+
+palette = plt.cm.Set2(np.linspace(0, 1, len(groups)))
+fig, ax = plt.subplots(figsize=(max(6, len(groups)*1.4), 6))
+ax.bar(range(len(groups)), [means[g] for g in groups],
+       yerr=[stds[g] for g in groups], color=palette,
+       capsize=5, width=0.6)
+ax.set_xticks(range(len(groups)))
+ax.set_xticklabels([str(g) for g in groups], rotation=30, ha='right')
+ax.set_ylabel('{y_col}')
+ax.set_title('Bar + Significance: {y_col} by {x_col}')
+plt.tight_layout()
+plt.savefig('bar_sig.png', dpi=300)
+plt.show()
+"""
+        return fig_s, None, code
+
+    except Exception as e:
+        return None, None, f"# Error: {e}"

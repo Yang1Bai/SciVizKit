@@ -69,16 +69,41 @@ SciVizKit is an open-source scientific visualization toolkit built with Streamli
 | Category | Count | Examples |
 |----------|-------|---------|
 | Distribution | 11 | Histogram, Violin, Ridgeline, Raincloud, ECDF |
-| Comparison | 15 | Bar, Lollipop, Dumbbell, Slope, Tornado, Radial Bar |
+| Comparison | 16 | Bar, Lollipop, Dumbbell, Slope, Tornado, Radial Bar, **Bar + Significance** ✨ |
 | Correlation | 9 | Scatter, Hexbin, 2D KDE, Pair Plot, Parallel Coords |
 | Time Series | 9 | Line, Streamgraph, Bump Chart, Calendar Heatmap, Candlestick |
-| Proportional | 8 | Treemap, Sunburst, Waffle, Marimekko, Circle Packing |
+| Proportional | 9 | Treemap, Sunburst, Waffle, Marimekko, Circle Packing, **Jade Ring (玉珏图)** ✨ |
 | Network | 6 | Sankey, Chord, Arc Diagram, Alluvial, Network Graph |
-| Scientific | 15 | Volcano, PCA, UMAP, t-SNE, ROC, Kaplan-Meier, Manhattan, Forest |
+| Scientific | 16 | Volcano, PCA, UMAP, t-SNE, ROC, Kaplan-Meier, Manhattan, Forest, **Radial Bar + Sig** ✨ |
 | Text | 2 | Word Cloud, Venn Diagram |
 | Geographic | 2 | Choropleth Map, Bubble Map |
 | 3D | 3 | 3D Scatter, 3D Surface, 3D Bar |
-| **Total** | **80+** | |
+| **Total** | **83** | |
+
+> ✨ = newly added, NGplot-inspired charts
+
+---
+
+## 🌐 Online Companion | 在线配套工具
+
+**[NGplot · bioinforw.com/sciZ](https://www.bioinforw.com/sciZ)**
+
+SciVizKit gives you open-source Python code you can copy and own. For rapid **interactive** exploration with 700+ ready-made templates (no coding required), NGplot is an excellent companion:
+
+| Feature | SciVizKit | NGplot |
+|---------|-----------|--------|
+| Open-source | ✅ | ❌ |
+| Python code export | ✅ | ✅ |
+| Chart templates | 83 | 700+ |
+| No-code web UI | ✅ Streamlit | ✅ |
+| Error bar + significance | ✅ (bar_sig, radial_bar_sig) | ✅ |
+| 玉珏图 / Jade Ring | ✅ | ✅ |
+| Publication-quality export | ✅ 300 DPI | ✅ |
+| Local/offline | ✅ | ❌ |
+
+> SciVizKit charts inspired by NGplot are marked ✨ in the table above.
+
+---
 
 ### 🚀 Quick Start
 

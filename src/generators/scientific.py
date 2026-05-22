@@ -809,3 +809,109 @@ bin_df = df[{valid_cols}].astype(bool)
         return fig_s, fig_p, code
     except Exception as e:
         return None, None, f"# Error: {e}"
+
+
+# ── Radial Bar + Significance (NGplot-inspired 环形柱状图+误差线) ─────
+# Based on NGplot's popular "环形柱状图-多变量-误差线-星号连接" templates.
+
+try:
+    from scipy.stats import f_oneway as _fow
+    _HAS_SCIPY_SCI = True
+except ImportError:
+    _HAS_SCIPY_SCI = False
+
+
+def radial_bar_sig(df: pd.DataFrame, group_col: str, value_col: str):
+    """
+    Radial Bar + Significance Chart (NGplot 环形柱状图 style):
+    Polar bar chart with error bars. If scipy is available, runs a
+    one-way ANOVA and annotates the significance level on the title.
+    """
+    try:
+        agg = df.groupby(group_col)[value_col].agg(["mean", "std", "count"]).reset_index()
+        agg.columns = [group_col, "mean", "std", "count"]
+        agg["sem"] = agg["std"] / np.sqrt(agg["count"])
+        n = len(agg)
+
+        angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        bar_width = (2 * np.pi) / n * 0.7
+
+        cmap = plt.cm.get_cmap("tab20", n)
+        colors = [cmap(i) for i in range(n)]
+
+        fig_s, ax = plt.subplots(figsize=(7, 7), subplot_kw={"projection": "polar"})
+        ax.set_theta_zero_location("N")
+        ax.set_theta_direction(-1)
+
+        max_val = (agg["mean"] + agg["sem"]).max() * 1.2
+        ax.set_ylim(0, max_val)
+
+        for i, (angle, row) in enumerate(zip(angles, agg.itertuples())):
+            mean_val = row.mean
+            sem_val = row.sem
+            ax.bar(angle, mean_val, width=bar_width,
+                   color=colors[i], alpha=0.85, label=str(getattr(row, group_col)))
+            # Error bar
+            ax.plot([angle, angle], [mean_val - sem_val, mean_val + sem_val],
+                    color="black", lw=1.5, zorder=5)
+            ax.plot([angle - bar_width * 0.15, angle + bar_width * 0.15],
+                    [mean_val + sem_val, mean_val + sem_val],
+                    color="black", lw=1.5, zorder=5)
+
+        # Significance annotation (one-way ANOVA)
+        sig_note = ""
+        if _HAS_SCIPY_SCI and n > 1:
+            try:
+                groups_data = [df[df[group_col] == g][value_col].dropna().values
+                                for g in agg[group_col]]
+                groups_data = [g for g in groups_data if len(g) >= 2]
+                if len(groups_data) > 1:
+                    _, p = _fow(*groups_data)
+                    stars = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+                    sig_note = f"  ANOVA: p={p:.2e} {stars}"
+            except Exception:
+                pass
+
+        ax.set_xticks(angles)
+        ax.set_xticklabels([str(g) for g in agg[group_col]], fontsize=9)
+        ax.yaxis.set_visible(False)
+        ax.set_title(f"Radial Bar + Significance\n{value_col} by {group_col}{sig_note}",
+                     pad=20, fontsize=11, fontweight="bold")
+        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        fig_s.tight_layout()
+
+        code = f"""\
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import f_oneway
+
+agg = df.groupby('{group_col}')['{value_col}'].agg(['mean','std','count']).reset_index()
+agg.columns = ['{group_col}','mean','std','count']
+agg['sem'] = agg['std'] / np.sqrt(agg['count'])
+n = len(agg)
+
+angles = np.linspace(0, 2*np.pi, n, endpoint=False)
+bar_width = (2*np.pi)/n * 0.7
+cmap = plt.cm.get_cmap('tab20', n)
+
+fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={{'projection': 'polar'}})
+ax.set_theta_zero_location('N')
+ax.set_theta_direction(-1)
+ax.set_ylim(0, (agg['mean'] + agg['sem']).max() * 1.2)
+
+for i, (angle, row) in enumerate(zip(angles, agg.itertuples())):
+    ax.bar(angle, row.mean, width=bar_width, color=cmap(i), alpha=0.85)
+    ax.plot([angle, angle], [row.mean - row.sem, row.mean + row.sem], 'k-', lw=1.5)
+
+ax.set_xticks(angles)
+ax.set_xticklabels(agg['{group_col}'].astype(str))
+ax.set_title('Radial Bar + Significance', pad=20)
+plt.tight_layout()
+plt.savefig('radial_bar_sig.png', dpi=300)
+plt.show()
+"""
+        return fig_s, None, code
+
+    except Exception as e:
+        return None, None, f"# Error: {e}"
