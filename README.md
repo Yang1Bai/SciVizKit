@@ -28,6 +28,14 @@
   <img src="assets/gallery/07_3d_scatter.png" width="45%">
   <img src="assets/gallery/08_publication_panel.png" width="45%">
 </p>
+<p align="center">
+  <img src="assets/gallery/09_radial_bar_sig.png" width="45%">
+  <img src="assets/gallery/10_bar_significance.png" width="45%">
+</p>
+<p align="center">
+  <img src="assets/gallery/11_ridgeline.png" width="45%">
+  <img src="assets/gallery/12_sankey.png" width="45%">
+</p>
 
 ---
 

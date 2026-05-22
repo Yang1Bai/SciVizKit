@@ -330,3 +330,344 @@ plt.close()
 print("Saved: assets/gallery/08_publication_panel.png")
 
 print("\n✅ All 8 gallery figures generated successfully!")
+
+# ── 9. Radial Bar + Significance (环形柱状图 + 误差线) — NGplot-inspired ───────
+np.random.seed(3)
+rb_groups = ['WT', 'KO-1', 'KO-2', 'OE-1', 'OE-2', 'KD']
+rb_data   = [np.random.normal(m, 0.6, 20)
+             for m in [5.2, 3.8, 3.5, 7.1, 6.8, 4.4]]
+rb_means  = np.array([d.mean() for d in rb_data])
+rb_sems   = np.array([d.std() / np.sqrt(len(d)) for d in rb_data])
+n_rb      = len(rb_groups)
+
+angles_rb  = np.linspace(0, 2 * np.pi, n_rb, endpoint=False)
+bar_w_rb   = (2 * np.pi) / n_rb * 0.65
+rb_palette = [NATURE[i % len(NATURE)] for i in range(n_rb)]
+
+fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={'projection': 'polar'})
+fig.patch.set_facecolor('white')
+ax.set_facecolor('#fafafa')
+ax.set_theta_zero_location('N')
+ax.set_theta_direction(-1)
+
+max_rb = (rb_means + rb_sems).max() * 1.25
+ax.set_ylim(0, max_rb)
+
+for i, (angle, mean_v, sem_v, grp) in enumerate(
+        zip(angles_rb, rb_means, rb_sems, rb_groups)):
+    ax.bar(angle, mean_v, width=bar_w_rb,
+           color=rb_palette[i], alpha=0.85, zorder=2)
+    # Error bar (SEM)
+    ax.plot([angle, angle], [mean_v - sem_v, mean_v + sem_v],
+            color='#333333', lw=2, zorder=4)
+    ax.plot([angle - bar_w_rb*0.15, angle + bar_w_rb*0.15],
+            [mean_v + sem_v, mean_v + sem_v],
+            color='#333333', lw=2, zorder=4)
+
+ax.set_xticks(angles_rb)
+ax.set_xticklabels(rb_groups, fontsize=11, fontweight='bold')
+ax.set_yticks(np.arange(0, max_rb, 2))
+ax.set_yticklabels([f'{v:.0f}' for v in np.arange(0, max_rb, 2)],
+                    fontsize=8, color='grey')
+ax.yaxis.set_tick_params(labelleft=True)
+ax.grid(True, linestyle='--', alpha=0.4, color='grey')
+
+# ANOVA annotation
+try:
+    from scipy.stats import f_oneway as _fow
+    _, p_rb = _fow(*rb_data)
+    stars_rb = '***' if p_rb < 0.001 else '**' if p_rb < 0.01 else '*' if p_rb < 0.05 else 'ns'
+    sig_note = f'ANOVA: p={p_rb:.2e}  {stars_rb}'
+except Exception:
+    sig_note = ''
+
+ax.set_title(f'Gene Expression by Genotype\nRadial Bar + Significance  {sig_note}',
+             pad=20, fontsize=12, fontweight='bold')
+plt.tight_layout()
+plt.savefig('assets/gallery/09_radial_bar_sig.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.close()
+print('Saved: assets/gallery/09_radial_bar_sig.png')
+
+# ── Jade Ring (kept, separate file not in README) ───────────────────────────
+jr_data = [
+    ('Proteobacteria',  38.4),
+    ('Firmicutes',      27.1),
+    ('Bacteroidetes',   18.6),
+    ('Actinobacteria',  10.2),
+    ('Verrucomicrobia',  3.9),
+    ('Fusobacteria',     1.8),
+]
+# Sort ascending so largest value is on outermost ring
+jr_data_sorted = sorted(jr_data, key=lambda x: x[1])
+categories_jr = [x[0] for x in jr_data_sorted]
+abundances_jr = [x[1] for x in jr_data_sorted]
+n_jr = len(categories_jr)
+max_val_jr = max(abundances_jr)
+
+# Jade-green gradient palette
+jr_colors = ['#A8D8B9', '#7FBF7F', '#50C878', '#2E8B57', '#3CB371', '#00A86B']
+
+fig, ax = plt.subplots(figsize=(8, 7), subplot_kw={'projection': 'polar'})
+fig.patch.set_facecolor('white')
+ax.set_facecolor('white')
+ax.set_theta_zero_location('N')
+ax.set_theta_direction(-1)
+ax.set_axis_off()
+
+ring_width_jr = 0.50 / (n_jr + 1)
+base_r_jr = 0.20
+
+for i, (cat, val) in enumerate(zip(categories_jr, abundances_jr)):
+    radius = base_r_jr + i * (ring_width_jr + 0.05)
+    fraction = val / max_val_jr   # arc = relative to max (jade ring convention)
+    theta_end = fraction * 2 * np.pi
+
+    theta_fill = np.linspace(0, theta_end, 500)
+    ax.fill_between(theta_fill, radius, radius + ring_width_jr,
+                    color=jr_colors[i], alpha=0.90)
+    theta_bg = np.linspace(theta_end, 2 * np.pi, 100)
+    ax.fill_between(theta_bg, radius, radius + ring_width_jr,
+                    color='#e8f5e9', alpha=0.7)
+
+    # % label at arc end-point
+    label_r = radius + ring_width_jr / 2
+    if fraction > 0.08:
+        mid_a = theta_end / 2
+        ax.text(mid_a, label_r,
+                f'{val:.1f}%', ha='center', va='center',
+                fontsize=8, fontweight='bold', color='white')
+
+# Legend with sorted order (largest first for readability)
+leg_sorted = sorted(zip(categories_jr, abundances_jr, jr_colors), key=lambda x: -x[1])
+leg_handles = [mpatches.Patch(color=c, label=f'{cat}  {val:.1f}%')
+               for cat, val, c in leg_sorted]
+ax.legend(handles=leg_handles, loc='lower center', bbox_to_anchor=(0.5, -0.08),
+          ncol=2, fontsize=9.5, frameon=False, handlelength=1.2)
+
+ax.set_title('Gut Microbiome Composition\nJade Ring Chart',
+             pad=22, fontsize=13, fontweight='bold', color='#1a5c35')
+plt.tight_layout()
+plt.savefig('assets/gallery/09b_jade_ring.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.close()
+print("Saved: assets/gallery/09b_jade_ring.png")
+
+# ── 10. Bar + Significance Brackets ─────────────────────────────────────────
+np.random.seed(7)
+groups_sig = ['Control', 'Drug A', 'Drug B', 'Drug C']
+data_sig = [np.random.normal(m, 1.2, 25) for m in [5.0, 7.8, 9.2, 6.4]]
+
+means_s = [d.mean() for d in data_sig]
+sems_s  = [d.std() / np.sqrt(len(d)) for d in data_sig]
+
+palette_s = [NATURE[i] for i in range(4)]
+fig, ax = plt.subplots(figsize=(7, 6))
+fig.patch.set_facecolor('white')
+ax.set_facecolor('white')
+
+bars_s = ax.bar(range(4), means_s, yerr=sems_s, capsize=6,
+                color=palette_s, alpha=0.85, width=0.55,
+                error_kw=dict(ecolor='#333333', lw=1.8, capthick=1.8),
+                edgecolor='white', linewidth=1.5)
+
+# Scatter individual points
+for i, d in enumerate(data_sig):
+    jitter = np.random.uniform(-0.15, 0.15, len(d))
+    ax.scatter(i + jitter, d, color=palette_s[i], alpha=0.35, s=18, zorder=3, linewidths=0)
+
+# Significance brackets
+def draw_bracket(ax, x1, x2, y, label, color='black'):
+    h = 0.18
+    ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], color=color, lw=1.4)
+    ax.text((x1+x2)/2, y+h+0.05, label, ha='center', va='bottom',
+            fontsize=13, color='red' if label != 'ns' else 'grey')
+
+y_top = max(means_s[i] + sems_s[i] for i in range(4))
+draw_bracket(ax, 0, 2, y_top + 0.6, '***')
+draw_bracket(ax, 1, 2, y_top + 1.5, '*')
+draw_bracket(ax, 0, 3, y_top + 2.5, 'ns')
+
+ax.set_xticks(range(4))
+ax.set_xticklabels(groups_sig, fontsize=12)
+ax.set_ylabel('Tumor Volume (mm³)', fontsize=12)
+ax.set_title('Drug Treatment Effect\nBar + Significance Brackets', fontsize=13, fontweight='bold', pad=12)
+ax.yaxis.grid(True, linestyle='--', alpha=0.4, color='#dddddd')
+ax.set_axisbelow(True)
+for spine in ['top', 'right']:
+    ax.spines[spine].set_visible(False)
+plt.tight_layout()
+plt.savefig('assets/gallery/10_bar_significance.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.close()
+print("Saved: assets/gallery/10_bar_significance.png")
+
+# ── 11. Ridgeline Plot (Joy Plot) ────────────────────────────────────────────
+from scipy.stats import gaussian_kde
+
+cell_lines = ['MCF-7', 'HeLa', 'A549', 'HCT116', 'PC-3', 'U87-MG']
+ridgecolors = ['#E64B35', '#4DBBD5', '#00A087', '#3C5488', '#F39B7F', '#8491B4']
+
+np.random.seed(15)
+ridge_data = [np.random.normal(loc, scale, 500)
+              for loc, scale in [(4.2, 1.1), (5.8, 0.9), (3.5, 1.4),
+                                  (6.2, 0.8), (4.9, 1.3), (7.1, 0.7)]]
+
+fig, ax = plt.subplots(figsize=(8, 6))
+fig.patch.set_facecolor('white')
+ax.set_facecolor('white')
+
+overlap = 1.5
+x_range = np.linspace(-1, 12, 400)
+
+for i, (cell, d, col) in enumerate(zip(cell_lines, ridge_data, ridgecolors)):
+    kde = gaussian_kde(d, bw_method=0.35)
+    y = kde(x_range)
+    y_scaled = y / y.max() * overlap
+    baseline = i * 1.0
+
+    ax.fill_between(x_range, baseline, baseline + y_scaled,
+                    color=col, alpha=0.75)
+    ax.plot(x_range, baseline + y_scaled, color=col, lw=1.5, alpha=0.9)
+    ax.axhline(baseline, color='white', lw=0.8, alpha=0.6)
+    ax.text(-0.8, baseline + 0.15, cell, ha='right', va='bottom',
+            fontsize=10.5, fontweight='bold', color='#333333')
+
+ax.set_xlabel('mRNA Expression (log₂ TPM)', fontsize=12)
+ax.set_xlim(-1, 11)
+ax.set_yticks([])
+for spine in ax.spines.values():
+    spine.set_visible(False)
+ax.xaxis.set_ticks_position('bottom')
+ax.spines['bottom'].set_visible(True)
+ax.set_title('Expression Distribution Across Cell Lines\nRidgeline Plot', fontsize=13, fontweight='bold', pad=14)
+plt.tight_layout()
+plt.savefig('assets/gallery/11_ridgeline.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.close()
+print("Saved: assets/gallery/11_ridgeline.png")
+
+# ── 12. Sankey / Alluvial Diagram ────────────────────────────────────────────
+try:
+    import plotly.graph_objects as go_s
+
+    label_s = ['Stage I', 'Stage II', 'Stage III', 'Stage IV',
+               'Complete\nResponse', 'Partial\nResponse', 'Stable\nDisease', 'Progression']
+    source_s = [0, 0, 1, 1, 2, 2, 3, 3]
+    target_s = [4, 5, 5, 6, 6, 7, 7, 4]
+    value_s  = [45, 15, 30, 25, 20, 35, 40, 10]
+    color_links = ['rgba(230,75,53,0.4)', 'rgba(77,187,213,0.4)',
+                   'rgba(77,187,213,0.4)', 'rgba(0,160,135,0.4)',
+                   'rgba(0,160,135,0.4)', 'rgba(60,84,136,0.4)',
+                   'rgba(60,84,136,0.4)', 'rgba(230,75,53,0.4)']
+
+    fig_s2 = go_s.Figure(go_s.Sankey(
+        node=dict(
+            pad=15, thickness=20, line=dict(color='white', width=0.5),
+            label=label_s,
+            color=['#E64B35', '#4DBBD5', '#00A087', '#3C5488',
+                   '#91D1C2', '#F39B7F', '#8491B4', '#DC0000'],
+        ),
+        link=dict(source=source_s, target=target_s, value=value_s, color=color_links),
+    ))
+    fig_s2.update_layout(
+        title_text='Cancer Stage → Treatment Response<br>Sankey Diagram',
+        title_font_size=14,
+        font_size=12,
+        width=800, height=500,
+        paper_bgcolor='white',
+    )
+    fig_s2.write_image('assets/gallery/12_sankey.png', scale=1.5)
+    print("Saved: assets/gallery/12_sankey.png")
+except Exception:
+    # Fallback: proper Bezier-ribbon Sankey with matplotlib
+    from matplotlib.path import Path
+    import matplotlib.patches as mpatches
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis('off')
+
+    # Left nodes (stages) and right nodes (outcomes)
+    left_lbls  = ['Stage I',  'Stage II', 'Stage III', 'Stage IV']
+    right_lbls = ['Complete\nResponse', 'Partial\nResponse', 'Stable\nDisease', 'Progression']
+    # flows[i][j] = n patients from stage i to outcome j
+    flows_mat = np.array([
+        [45, 10,  5,  0],
+        [10, 25, 15,  5],
+        [ 5, 10, 20, 20],
+        [ 0,  5, 10, 35],
+    ], dtype=float)
+
+    left_totals  = flows_mat.sum(axis=1)
+    right_totals = flows_mat.sum(axis=0)
+    total = flows_mat.sum()
+
+    margin, node_w = 0.02, 0.03
+    left_x, right_x = 0.18, 0.78
+    gap = 0.025
+
+    def node_ys(totals, margin=0.05):
+        """Return (bottom_y, top_y) for each node stacked vertically."""
+        scale = (1 - 2*margin - gap*(len(totals)-1)) / totals.sum()
+        ys = []
+        y = margin
+        for t in totals:
+            h = t * scale
+            ys.append((y, y + h))
+            y += h + gap
+        return ys
+
+    left_ys  = node_ys(left_totals)
+    right_ys = node_ys(right_totals)
+
+    lc = [NATURE[i] for i in range(4)]
+    rc = ['#91D1C2', '#F39B7F', '#8491B4', '#DC0000']
+
+    # Draw Bezier ribbons
+    left_cursors  = [y0 for y0, _ in left_ys]
+    right_cursors = [y0 for y0, _ in right_ys]
+    scale = (1 - 2*0.05 - gap*3) / total
+
+    for i in range(4):
+        for j in range(4):
+            val = flows_mat[i, j]
+            if val == 0:
+                continue
+            h = val * scale
+            y0_l, y1_l = left_cursors[i], left_cursors[i] + h
+            y0_r, y1_r = right_cursors[j], right_cursors[j] + h
+            left_cursors[i]  += h
+            right_cursors[j] += h
+
+            verts = [
+                (left_x + node_w, y0_l), (0.5, y0_l),
+                (0.5, y0_r), (right_x, y0_r),
+                (right_x, y1_r), (0.5, y1_r),
+                (0.5, y1_l), (left_x + node_w, y1_l),
+                (left_x + node_w, y0_l),
+            ]
+            codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4,
+                     Path.LINETO, Path.CURVE4, Path.CURVE4, Path.CURVE4, Path.CLOSEPOLY]
+            path  = Path(verts, codes)
+            patch = mpatches.FancyArrowPatch.__new__(mpatches.FancyArrowPatch)
+            patch = mpatches.PathPatch(path, facecolor=lc[i], alpha=0.35, linewidth=0)
+            ax.add_patch(patch)
+
+    # Draw nodes
+    for i, ((y0, y1), lbl) in enumerate(zip(left_ys, left_lbls)):
+        ax.add_patch(plt.Rectangle((left_x, y0), node_w, y1-y0, color=lc[i], zorder=3))
+        ax.text(left_x - 0.02, (y0+y1)/2, lbl, ha='right', va='center',
+                fontsize=10, fontweight='bold', color='#333333')
+    for j, ((y0, y1), lbl) in enumerate(zip(right_ys, right_lbls)):
+        ax.add_patch(plt.Rectangle((right_x, y0), node_w, y1-y0, color=rc[j], zorder=3))
+        ax.text(right_x + node_w + 0.02, (y0+y1)/2, lbl, ha='left', va='center',
+                fontsize=10, fontweight='bold', color='#333333')
+
+    ax.set_title('Cancer Stage to Treatment Response\nSankey Flow Diagram',
+                 fontsize=13, fontweight='bold', pad=12)
+    plt.tight_layout()
+    plt.savefig('assets/gallery/12_sankey.png', dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close()
+    print('Saved: assets/gallery/12_sankey.png (bezier fallback)')
+
+print("\n✅ All new gallery figures (09–12) generated!")
